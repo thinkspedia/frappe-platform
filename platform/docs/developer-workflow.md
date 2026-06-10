@@ -303,16 +303,20 @@ components run on the container, only the thin client runs on your Mac).
 This is the recommended path if you already use **VSCode → Connect to WSL → Open Folder**.
 All steps below are one-time, per machine.
 
-**Why two symlinks are needed:**
+**Why this setup is needed:**
 
-There are two path problems on WSL2:
+There are two path problems on WSL2 that break IntelliSense:
 
 1. The bench venv's `.pth` files use `/workspace/...` — a container-absolute path that
    doesn't exist on WSL2. Fix: symlink `/workspace` → your repo root.
-2. The bench venv's `python` binary is itself a symlink to
-   `/home/frappe/.pyenv/versions/3.14.2/bin/python3` — a path that only exists inside the
-   container (user `frappe`). Fix: install pyenv + Python 3.14.2 on WSL2 so VSCode can
-   use a real local interpreter.
+2. The bench venv's `python` binary is a symlink to `/home/frappe/.pyenv/...` — a path
+   that only exists inside the container (user `frappe`). Fix: install pyenv + Python
+   3.14.2 on WSL2 so VSCode has a real local interpreter.
+
+The `.vscode/settings.json` committed to each app repo already sets
+`python.defaultInterpreterPath` to `~/.pyenv/versions/3.14.2/bin/python3` and
+`python-envs.defaultEnvManager` to `pyenv` — so once pyenv is installed, everything
+is auto-configured with no manual VSCode steps.
 
 ---
 
@@ -379,6 +383,7 @@ make code APP=nusakura_app
 ```
 
 This opens VSCode directly to `/workspace/development/frappe-bench/apps/<APP>`.
+IntelliSense and Go-to-Definition work immediately — no further configuration needed.
 
 Option B — manually:
 
@@ -387,32 +392,17 @@ Option B — manually:
 
 ---
 
-**Step 5 — Select the WSL2 Python interpreter in VSCode:**
-
-The `.vscode/settings.json` defaults to the container venv path. On WSL2 you need to
-override it once:
-
-1. `Cmd/Ctrl+Shift+P` → **Python: Select Interpreter**
-2. Choose **Enter interpreter path** → paste:
-   ```
-   /home/<your-username>/.pyenv/versions/3.14.2/bin/python3
-   ```
-
-Pylance uses `python.analysis.extraPaths` (already set in `.vscode/settings.json`) to
-resolve `frappe`, `erpnext`, and `hrms` imports — the interpreter just needs to exist and
-be a valid Python 3 binary.
-
----
-
-**What you get automatically (no further config needed):**
+**What is auto-configured on first open:**
 
 ```
-nusakura_app/.vscode/settings.json     ← Pylance extra paths + formatter
-nusakura_app/.vscode/extensions.json   ← recommends Python, Pylance, Ruff, SQLTools
-nusakura_app/.vscode/launch.json       ← debugger attach config (port 5678)
+.vscode/settings.json     ← interpreter (~/.pyenv/versions/3.14.2/bin/python3)
+                             + pyenv env manager + Pylance extra paths + Ruff formatter
+.vscode/extensions.json   ← recommends Python, Pylance, Ruff, SQLTools
+.vscode/launch.json       ← debugger attach config (port 5678)
 ```
 
 VSCode prompts **"Do you want to install the recommended extensions?"** on first open.
+No manual interpreter selection is needed — `settings.json` sets it automatically.
 
 ---
 
@@ -1271,17 +1261,20 @@ be resolved`.
 **Fix:** Follow the full [Optimized setup for WSL2 + VSCode](#optimized-setup-for-wsl2--vscode-recommended) steps above. In short:
 
 ```bash
-# 1. Install pyenv + Python 3.14.2 on WSL2
+# 1. Install build deps + pyenv + Python 3.14.2 on WSL2
+sudo apt-get install -y libbz2-dev libncurses-dev libreadline-dev libsqlite3-dev \
+  libssl-dev liblzma-dev libffi-dev zlib1g-dev tk-dev
 curl https://pyenv.run | bash
-# add pyenv init to ~/.zshrc, then:
+# add pyenv init to ~/.zshrc, reload, then:
 pyenv install 3.14.2
 
 # 2. Create /workspace symlink
 sudo ln -sf /path/to/frappe_builder /workspace
-
-# 3. In VSCode: Cmd/Ctrl+Shift+P → "Python: Select Interpreter"
-#    Enter: /home/<your-username>/.pyenv/versions/3.14.2/bin/python3
 ```
+
+After this, open the app folder via `make code APP=nusakura_app` from `platform/` — the
+`.vscode/settings.json` committed to each app already sets `python.defaultInterpreterPath`
+to `~/.pyenv/versions/3.14.2/bin/python3`, so no manual interpreter selection is needed.
 
 ---
 
