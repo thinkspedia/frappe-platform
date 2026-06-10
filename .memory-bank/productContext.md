@@ -1,33 +1,47 @@
 # Product Context
 
 ## Problem Being Solved
-Running Frappe/ERPNext in production requires assembling many moving parts: database, Redis, Gunicorn workers, a queue processor, a scheduler, and an Nginx frontend. This repo eliminates that assembly burden by providing tested, composable Docker Compose configurations for every common topology.
+Setting up a Frappe/ERPNext local dev environment requires assembling many interdependent
+services, configuring a bench, installing private apps, and wiring everything together.
+This platform eliminates that assembly burden: one `make dev-start` from a cloned repo
+boots the entire stack, bootstraps bench, and installs all apps automatically.
+
+For day-to-day development, the platform also eliminates context-switching: developers
+work entirely from their app directory (`development/frappe-bench/apps/nusakura_app/`)
+without ever needing to navigate to `platform/`.
 
 ## Target Users
-1. **Self-hosters** — individuals or small teams deploying ERPNext on a VPS or local server
-2. **Platform engineers** — teams managing multi-tenant Frappe deployments at scale
-3. **App developers** — who need a reproducible local dev environment matching production
-4. **CI/CD pipelines** — automated systems pulling images from Docker Hub
+1. **Thinkspedia developers** — building `nusakura_app` and `nusakura_waha_app`
+2. **New team onboards** — needs a single README + workflow doc to be productive
+3. **Future production deployment** — via Nomad or Dokploy (planned)
 
 ## Core Value Propositions
-- **Composability:** Pick your DB, pick your proxy, pick your SSL strategy — combine overrides without modifying the base
-- **Reproducibility:** Pinned base images (Python 3.14.2, Node 24.13.0) via `docker-bake.hcl` variables
-- **Multi-version support:** v15, v16, and develop branches all tested in CI
-- **Dev parity:** Devcontainer config mirrors the production image toolchain
+- **One-command start**: `make dev-start` handles everything, prints all URLs + credentials
+- **No directory switching**: app-level Makefile delegates to platform transparently
+- **Zero IDE config**: `.vscode/settings.json` committed to each app repo auto-configures
+  interpreter, Pylance extra paths, Ruff formatter, and debugger
+- **Source of truth docs**: `platform/docs/developer-workflow.md` covers every scenario
+  (new feature, bug fix, hotfix, release, IDE setup, troubleshooting)
 
-## Deployment Targets (Current and Planned)
+## User Experience Goals
+- Developer opens terminal in app folder → runs `make start` → stack is up
+- Developer edits Python file → save → Frappe auto-reloads (no restart needed)
+- Developer opens VSCode → IntelliSense and Go-to-Definition work for all Frappe imports
+- Developer releases a version → `make release-version` → version bumped, committed, tagged, pushed
+- New developer onboards → follows `developer-workflow.md` → productive in < 30 min
+
+## Deployment Targets
 | Target | Status |
 |---|---|
-| Local Docker Compose | Active |
-| VSCode Devcontainer | Active |
-| JetBrains Devcontainer | Active |
-| Dokploy | Planned |
-| HashiCorp Nomad | Planned |
+| Local Docker Compose (`make dev-start`) | Working |
+| VSCode WSL2 with IntelliSense | Working (pyenv + /workspace symlink) |
+| VSCode Attach to Container | Working |
+| JetBrains Docker interpreter | Working (documented) |
+| Nomad HCL production | Planned |
+| Dokploy compose production | Planned |
 
 ## Product Constraints
-- Images must remain immutable — no writes to image layers at runtime; all state in the `sites/` volume
-- Public Docker Hub images must be multi-arch (amd64 + arm64)
-- `pwd.yml` is the single-file demo artifact — it must remain auto-generated from scripts
-
-## Documentation Site
-VitePress at `docs/` — auto-deployed to GitHub Pages on every merge to `main`. Covers getting started, setup, production, operations, development, migration, troubleshooting, and reference.
+- No modification to `frappe/` or `erpnext/` source — ever
+- `webserver_port=80` must match Traefik's public entry point — changing it breaks email URLs
+- App repos use remote name `upstream` (not `origin`) — set by `bench get-app`
+- GITHUB_TOKEN never stored in files — injected at runtime only
