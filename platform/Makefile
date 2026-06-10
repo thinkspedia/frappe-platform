@@ -138,6 +138,28 @@ dev-clear-cache: check-env ## Clear Frappe cache on the dev site
 dev-backup: check-env ## Backup the dev site
 	$(COMPOSE) exec frappe-web bash -c "bench --site $${FRAPPE_SITE_NAME:-dev.localhost} backup --with-files"
 
+.PHONY: dev-get-app
+dev-get-app: check-env ## Get and install an app — usage: make dev-get-app url=https://github.com/org/app branch=main
+ifndef url
+	$(error Usage: make dev-get-app url=<repo-url> [branch=<branch>])
+endif
+	$(COMPOSE) exec frappe-web bash -c "\
+		cd /workspace/development/frappe-bench && \
+		bench get-app --branch $${branch:-main} $(url) && \
+		bench --site $${FRAPPE_SITE_NAME:-dev.localhost} install-app $$(basename $(url) .git)"
+
+.PHONY: dev-mariadb
+dev-mariadb: check-env ## Open MariaDB console for the dev site
+	$(COMPOSE) exec frappe-web bash -c "cd /workspace/development/frappe-bench && bench --site $${FRAPPE_SITE_NAME:-dev.localhost} mariadb"
+
+.PHONY: dev-export-fixtures
+dev-export-fixtures: check-env ## Export fixtures for all apps (or: make dev-export-fixtures app=nusakura_app)
+ifdef app
+	$(COMPOSE) exec frappe-web bash -c "cd /workspace/development/frappe-bench && bench --site $${FRAPPE_SITE_NAME:-dev.localhost} export-fixtures --app $(app)"
+else
+	$(COMPOSE) exec frappe-web bash -c "cd /workspace/development/frappe-bench && bench --site $${FRAPPE_SITE_NAME:-dev.localhost} export-fixtures"
+endif
+
 .PHONY: dev-ps
 dev-ps: check-env ## Show running service status
 	$(COMPOSE) ps
