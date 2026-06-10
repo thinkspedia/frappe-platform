@@ -34,6 +34,12 @@ PLATFORM_DIR := $(shell pwd)
 ENV_FILE     := $(PLATFORM_DIR)/.env
 ORG_BENCH    := ORG_BENCH_PLATFORM_DIR=$(PLATFORM_DIR) org-bench
 
+# Production image coordinates (read from .env)
+IMAGE_REGISTRY ?= registry.corp.thinkspedia.id/frappe/nusakura
+IMAGE_NAME     ?= nusakuraerp
+FRAPPE_BRANCH  ?= version-16
+FRAPPE_IMAGE_PREFIX ?= frappe
+
 # Detect OS for platform-specific helpers
 UNAME := $(shell uname -s)
 
@@ -185,49 +191,100 @@ endif
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
+
+# Injects GITHUB_TOKEN into private repo URLs, passes apps.json as a BuildKit
+# secret so the token is never stored in image layer metadata, then cleans up.
+_APPS_TMP := /tmp/frappe-platform-apps-prod.json
+
+.PHONY: _apps-json
+_apps-json:
+ifndef GITHUB_TOKEN
+	$(error GITHUB_TOKEN is not set. Export it before running make build)
+endif
+	@python3 -c "\
+import json, os, sys; \
+token = os.environ['GITHUB_TOKEN']; \
+apps = json.load(open('$(PLATFORM_DIR)/apps.json')); \
+[app.update({'url': app['url'].replace('https://', f'https://{token}@')}) \
+ for app in apps if 'thinkspedia' in app.get('url', '')]; \
+print(json.dumps(apps, indent=2))" > $(_APPS_TMP)
+
 .PHONY: build
-build: check-env ## Build production image — usage: make build tag=v1.0.0
+build: check-env _apps-json ## Build + push production image — usage: make build tag=v1.0.0
 ifndef tag
 	$(error Usage: make build tag=<version>)
 endif
-	$(ORG_BENCH) build --tag $(tag)
-
-.PHONY: build-push
-build-push: check-env ## Build and push production image — usage: make build-push tag=v1.0.0
-ifndef tag
-	$(error Usage: make build-push tag=<version>)
-endif
-	$(ORG_BENCH) build --tag $(tag) --push
+	@echo "Building $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag) ..."
+	docker buildx build \
+		--platform linux/amd64 \
+		--build-arg FRAPPE_BRANCH=$(FRAPPE_BRANCH) \
+		--build-arg FRAPPE_IMAGE_PREFIX=$(FRAPPE_IMAGE_PREFIX) \
+		--build-arg CACHE_BUST=$(shell date +%s) \
+		--secret id=apps_json,src=$(_APPS_TMP) \
+		--tag $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag) \
+		--tag $(IMAGE_REGISTRY)/$(IMAGE_NAME):latest \
+		--push \
+		--file $(PLATFORM_DIR)/Containerfile \
+		$(PLATFORM_DIR)/..
+	@rm -f $(_APPS_TMP)
+	@echo ""
+	@echo "  Image pushed: $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag)"
+	@echo ""
 
 # ---------------------------------------------------------------------------
-# Deploy
+# Deploy — Dokploy
 # ---------------------------------------------------------------------------
-.PHONY: deploy-nomad
-deploy-nomad: check-env ## Deploy to Nomad — usage: make deploy-nomad tag=v1.0.0 env=prod
-ifndef tag
-	$(error Usage: make deploy-nomad tag=<version> env=<prod|staging>)
-endif
-ifndef env
-	$(error Usage: make deploy-nomad tag=<version> env=<prod|staging>)
-endif
-	$(ORG_BENCH) deploy --env $(env) --tag $(tag) --mode ship
+
+# Retrieves the Compose project ID from Dokploy by project name.
+DOKPLOY_PROJECT_NAME ?= nusakura-erp
 
 .PHONY: deploy-dokploy
-deploy-dokploy: check-env ## Deploy via Dokploy — usage: make deploy-dokploy tag=v1.0.0 env=prod
+deploy-dokploy: check-env ## Build + push image then redeploy on Dokploy — usage: make deploy-dokploy tag=v1.0.0
 ifndef tag
-	$(error Usage: make deploy-dokploy tag=<version> env=<prod|staging>)
+	$(error Usage: make deploy-dokploy tag=<version>)
 endif
-ifndef env
-	$(error Usage: make deploy-dokploy tag=<version> env=<prod|staging>)
+ifndef DOKPLOY_TOKEN
+	$(error DOKPLOY_TOKEN is not set in .env)
 endif
-	$(ORG_BENCH) deploy --env $(env) --tag $(tag) --mode dokploy
+ifndef DOKPLOY_SERVER
+	$(error DOKPLOY_SERVER is not set in .env)
+endif
+	@echo "Building and pushing image..."
+	$(MAKE) build tag=$(tag)
+	@echo "Triggering Dokploy redeploy for project '$(DOKPLOY_PROJECT_NAME)'..."
+	@$(PLATFORM_DIR)/scripts/dokploy-deploy.sh \
+		"$(DOKPLOY_SERVER)" \
+		"$(DOKPLOY_TOKEN)" \
+		"$(DOKPLOY_PROJECT_NAME)" \
+		"$(tag)"
 
-.PHONY: deploy-dry-run
-deploy-dry-run: check-env ## Nomad job plan (dry run) — usage: make deploy-dry-run tag=v1.0.0 env=prod
-ifndef tag
-	$(error Usage: make deploy-dry-run tag=<version> env=<prod|staging>)
+.PHONY: dokploy-status
+dokploy-status: check-env ## Show current Dokploy deployment status
+ifndef DOKPLOY_TOKEN
+	$(error DOKPLOY_TOKEN is not set in .env)
 endif
-ifndef env
-	$(error Usage: make deploy-dry-run tag=<version> env=<prod|staging>)
+	@$(PLATFORM_DIR)/scripts/dokploy-deploy.sh \
+		"$(DOKPLOY_SERVER)" \
+		"$(DOKPLOY_TOKEN)" \
+		"$(DOKPLOY_PROJECT_NAME)" \
+		"" \
+		--status
+
+.PHONY: prod-new-site
+prod-new-site: check-env ## Create site on Dokploy — run once after first deploy
+ifndef DOKPLOY_TOKEN
+	$(error DOKPLOY_TOKEN is not set in .env)
 endif
-	$(ORG_BENCH) deploy --env $(env) --tag $(tag) --mode ship --dry-run
+	@echo ""
+	@echo "  Run this command on the Dokploy server to create the site:"
+	@echo ""
+	@echo "  docker exec -it \$$(docker ps --filter name=backend --format '{{.Names}}' | head -1) \\"
+	@echo "    bench new-site $(FRAPPE_SITE_NAME) \\"
+	@echo "    --mariadb-user-host-login-scope='%' \\"
+	@echo "    --db-root-password '$(DB_ROOT_PASSWORD)' \\"
+	@echo "    --admin-password '$(SITE_ADMIN_PASSWORD)' \\"
+	@echo "    --install-app erpnext \\"
+	@echo "    --install-app hrms \\"
+	@echo "    --install-app nusakura_app \\"
+	@echo "    --install-app nusakura_waha_app"
+	@echo ""
