@@ -41,21 +41,30 @@ docs/   → documentation only → no version bump
 ```
 
 ```bash
-# Start your day
-cd platform/ && make dev-start
+# All commands below run from your app directory (e.g. apps/nusakura_app/)
+# No need to switch to platform/ — the app Makefile delegates automatically.
 
-# Open a shell in the container
-make dev-shell
+# Start your day
+make start
+
+# Sync latest code from upstream, migrate, and clear cache
+make sync
 
 # After changing Python / hooks
 make dev-migrate
 
 # After changing JS / CSS
-# bench build runs automatically in dev mode; if not, run inside shell:
-bench build --app nusakura_app
+# bench build runs automatically in dev mode; if not:
+make dev-build
+
+# Open a shell in the container
+make dev-shell
 
 # Stop everything
-make dev-stop
+make stop
+
+# Open an app folder in VSCode (run from platform/ only)
+make code APP=nusakura_app
 ```
 
 ---
@@ -289,17 +298,143 @@ components run on the container, only the thin client runs on your Mac).
 
 ---
 
+### Optimized setup for WSL2 + VSCode (recommended)
+
+This is the recommended path if you already use **VSCode → Connect to WSL → Open Folder**.
+All steps below are one-time, per machine.
+
+**Why two symlinks are needed:**
+
+There are two path problems on WSL2:
+
+1. The bench venv's `.pth` files use `/workspace/...` — a container-absolute path that
+   doesn't exist on WSL2. Fix: symlink `/workspace` → your repo root.
+2. The bench venv's `python` binary is itself a symlink to
+   `/home/frappe/.pyenv/versions/3.14.2/bin/python3` — a path that only exists inside the
+   container (user `frappe`). Fix: install pyenv + Python 3.14.2 on WSL2 so VSCode can
+   use a real local interpreter.
+
+---
+
+**Step 1 — Install pyenv and Python 3.14.2 on WSL2:**
+
+```bash
+# Install build dependencies first (required — pyenv compiles Python from source)
+sudo apt-get update && sudo apt-get install -y \
+  libbz2-dev libncurses-dev libreadline-dev libsqlite3-dev \
+  libssl-dev liblzma-dev libffi-dev zlib1g-dev tk-dev
+
+# Install pyenv
+curl https://pyenv.run | bash
+
+# Add to ~/.zshrc (or ~/.bashrc):
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+
+# Reload shell, then install the same Python version used in the container:
+source ~/.zshrc
+pyenv install 3.14.2
+
+# Verify no missing modules:
+~/.pyenv/versions/3.14.2/bin/python3 -c "import bz2, sqlite3, readline, lzma; print('all good')"
+```
+
+---
+
+**Step 2 — Create a `/workspace` symlink:**
+
+```bash
+# Replace with wherever you cloned the repo:
+sudo ln -sf /path/to/frappe_builder /workspace
+
+# Typical example:
+# sudo ln -sf /home/<your-username>/workspaces/frappe_builder /workspace
+```
+
+After this, `/workspace/development/frappe-bench/apps/frappe` resolves correctly on WSL2
+and the venv's `.pth` files find all Frappe source paths.
+
+---
+
+**Step 3 — Verify imports work:**
+
+```bash
+~/.pyenv/versions/3.14.2/bin/python3 \
+  -c "import sys; sys.path.insert(0, '/workspace/development/frappe-bench/apps/frappe'); import frappe; print(frappe.__version__)"
+```
+
+You should see the Frappe version number, not an ImportError.
+
+---
+
+**Step 4 — Open your app in VSCode:**
+
+Option A — `make code` shortcut (fastest):
+
+```bash
+cd /workspace/platform
+make code APP=nusakura_app
+# or: make code APP=nusakura_waha_app
+```
+
+This opens VSCode directly to `/workspace/development/frappe-bench/apps/<APP>`.
+
+Option B — manually:
+
+1. VSCode → **Connect to WSL**
+2. **File → Open Folder** → `/workspace/development/frappe-bench/apps/nusakura_app`
+
+---
+
+**Step 5 — Select the WSL2 Python interpreter in VSCode:**
+
+The `.vscode/settings.json` defaults to the container venv path. On WSL2 you need to
+override it once:
+
+1. `Cmd/Ctrl+Shift+P` → **Python: Select Interpreter**
+2. Choose **Enter interpreter path** → paste:
+   ```
+   /home/<your-username>/.pyenv/versions/3.14.2/bin/python3
+   ```
+
+Pylance uses `python.analysis.extraPaths` (already set in `.vscode/settings.json`) to
+resolve `frappe`, `erpnext`, and `hrms` imports — the interpreter just needs to exist and
+be a valid Python 3 binary.
+
+---
+
+**What you get automatically (no further config needed):**
+
+```
+nusakura_app/.vscode/settings.json     ← Pylance extra paths + formatter
+nusakura_app/.vscode/extensions.json   ← recommends Python, Pylance, Ruff, SQLTools
+nusakura_app/.vscode/launch.json       ← debugger attach config (port 5678)
+```
+
+VSCode prompts **"Do you want to install the recommended extensions?"** on first open.
+
+---
+
 ### Recommended setup for macOS team developers
 
-Use **Approach A** with VSCode's "Attach to Running Container" for IDE features:
+**Option A — `/workspace` symlink (same as WSL2):**
 
-1. `make dev-start` — starts the full stack
-2. VSCode → Attach to Running Container → `platform-frappe-web-1`
-3. Open `/workspace/development/frappe-bench/apps/nusakura_app` inside the container
-4. Python IntelliSense, imports, and debugger all work
+```bash
+sudo ln -sf /path/to/frappe_builder /workspace
+```
 
-This gives you automated setup (Approach A) and IDE integration (Approach B's key benefit)
-without manually running bench init.
+macOS may require disabling System Integrity Protection (SIP) to create symlinks in `/`.
+Once done, use `make code APP=nusakura_app` from `platform/` to open the app folder.
+
+**Option B — Attach to Running Container (no SIP change needed):**
+
+1. `make dev-start`
+2. `Cmd+Shift+P` → **Dev Containers: Attach to Running Container**
+3. Select `platform-frappe-web-1`
+4. Open `/workspace/development/frappe-bench/apps/nusakura_app`
+
+Inside the container `/workspace` is real, so all imports resolve with no symlink needed.
 
 ---
 
@@ -307,8 +442,13 @@ without manually running bench init.
 
 ### Start the stack
 
+You can start the stack from either the **app directory** (recommended) or the `platform/` directory:
+
 ```bash
-cd /path/to/frappe_builder/platform
+# From app directory (e.g. development/frappe-bench/apps/nusakura_app/)
+make start
+
+# From platform/ directory
 make dev-start
 ```
 
@@ -324,18 +464,30 @@ Access the site at **http://dev.localhost** (no port number).
 
 ### Useful daily commands
 
+Run these from **your app directory** — no need to switch to `platform/`:
+
 ```bash
-make dev-start              # start all services
-make dev-stop               # stop (data preserved)
-make dev-logs               # follow all logs
-make dev-logs-web           # follow frappe-web only
-make dev-shell              # bash shell in frappe-web container
-make dev-console            # Frappe Python console (bench console)
+make start                  # start the full dev stack
+make stop                   # stop (data preserved)
+make logs                   # follow all logs
+make restart                # restart all services
+
+make sync                   # git pull upstream + migrate + clear-cache (one-shot)
 make dev-migrate            # bench migrate (after schema changes)
 make dev-clear-cache        # clear Frappe cache
+make dev-build              # build JS/CSS assets for this app
+make dev-console            # Frappe Python console (bench console)
+make dev-shell              # bash shell in frappe-web container
+make dev-export-fixtures    # export fixtures for this app
+```
+
+From the `platform/` directory only:
+
+```bash
 make dev-mariadb            # MariaDB SQL console
 make dev-ps                 # show service status
 make dev-destroy            # FULL RESET — wipes bench + DB
+make code APP=nusakura_app  # open app folder in VSCode
 ```
 
 ### Where your app code lives
@@ -370,7 +522,7 @@ Use this for any new functionality that did not exist before.
 ```bash
 cd development/frappe-bench/apps/nusakura_app  # or nusakura_waha_app
 git checkout main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 ```
 
 ### 2. Create a feature branch
@@ -397,7 +549,7 @@ See [Testing Locally](#testing-locally) section.
 ### 5. Push and open a PR
 
 ```bash
-git push origin feat/leave-encashment-policy
+git push upstream feat/leave-encashment-policy
 ```
 
 Open a Pull Request on GitHub targeting `main`.
@@ -411,7 +563,7 @@ Open a Pull Request on GitHub targeting `main`.
 ```bash
 git add <files>
 git commit -m "fix(leave): handle zero-balance edge case in encashment"
-git push origin feat/leave-encashment-policy
+git push upstream feat/leave-encashment-policy
 ```
 
 ### 7. Merge the PR
@@ -422,13 +574,13 @@ Once approved, merge via GitHub (prefer **Squash and merge** for clean history, 
 
 ```bash
 git checkout main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 
 cd development/frappe-bench/apps/nusakura_app
 make version-current        # confirm current version
 make version-next           # preview next version (auto-detects feat → minor bump)
 make release-version        # bumps __init__.py, commits, tags
-git push origin main --tags
+git push upstream main --tags
 ```
 
 ### 9. Delete local branch
@@ -447,7 +599,7 @@ Use this for any defect reported by users or found during testing.
 
 ```bash
 git checkout main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 git checkout -b fix/overtime-rounding-error
 ```
 
@@ -479,9 +631,9 @@ Same as Scenario A steps 5–7.
 
 ```bash
 git checkout main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 make release-version VERSION_BUMP=patch
-git push origin main --tags
+git push upstream main --tags
 ```
 
 ### 7. Cleanup
@@ -501,7 +653,7 @@ A hotfix is still branched — never commit directly to main.
 
 ```bash
 git checkout main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 git checkout -b hotfix/login-broken-after-v1.4.0
 ```
 
@@ -529,9 +681,9 @@ Merge as soon as one approval is received.
 
 ```bash
 git checkout main
-git pull --ff-only origin main
+git pull --ff-only upstream main
 make release-version VERSION_BUMP=patch
-git push origin main --tags
+git push upstream main --tags
 ```
 
 ### 6. Cleanup
@@ -625,7 +777,7 @@ make release-version VERSION_BUMP=minor   # force minor
 Then push:
 
 ```bash
-git push origin main --tags
+git push upstream main --tags
 ```
 
 > For the full release-to-production flow (Docker image build, staging deploy, production deploy),
@@ -814,7 +966,7 @@ git branch -D feat/my-feature      # force delete
 ### Delete remote branch (if not auto-deleted by GitHub)
 
 ```bash
-git push origin --delete feat/my-feature
+git push upstream --delete feat/my-feature
 ```
 
 ### List all local branches
@@ -938,7 +1090,7 @@ Step-by-step instructions to verify the change locally.
                                           │
                                   ┌───────▼────────┐
                                   │  git push       │
-                                  │  origin main    │
+                                  │  upstream main  │
                                   │  --tags         │
                                   └───────┬────────┘
                                           │
@@ -1065,6 +1217,70 @@ If the issue persists after a destroy/start cycle, check the bootstrap logs:
 
 ```bash
 make dev-logs-bootstrap
+```
+
+---
+
+### pyenv Python install warns about missing modules (bz2, sqlite3, readline, lzma)
+
+**Symptom:** After `pyenv install 3.14.2`, warnings like:
+
+```
+WARNING: The Python bz2 extension was not compiled. Missing the bzip2 lib?
+WARNING: The Python sqlite3 extension was not compiled. Missing the SQLite3 lib?
+WARNING: The Python readline extension was not compiled. Missing the GNU readline lib?
+WARNING: The Python lzma extension was not compiled. Missing the lzma lib?
+```
+
+**Root cause:** pyenv builds Python from source. The C extension libraries must be
+installed on the system **before** running `pyenv install`.
+
+**Fix:**
+
+```bash
+# 1. Install all required build dependencies
+sudo apt-get update && sudo apt-get install -y \
+  libbz2-dev libncurses-dev libreadline-dev libsqlite3-dev \
+  libssl-dev liblzma-dev libffi-dev zlib1g-dev tk-dev
+
+# 2. Remove the broken build
+pyenv uninstall 3.14.2
+
+# 3. Reinstall cleanly
+pyenv install 3.14.2
+
+# 4. Verify
+~/.pyenv/versions/3.14.2/bin/python3 -c "import bz2, sqlite3, readline, lzma; print('all good')"
+```
+
+---
+
+### VSCode Python interpreter shows "could not be resolved" / `import frappe` fails on WSL2
+
+**Symptom A:** VSCode warning: `Default interpreter path '/workspace/.../python' could not
+be resolved`.
+
+**Symptom B:** Red underlines under `import frappe` / `import erpnext` in all Python files.
+
+**Root cause:** Two separate issues compound on WSL2:
+
+1. `/workspace` doesn't exist — the bench venv `.pth` files can't find Frappe source paths.
+2. The bench venv `python` is a symlink to `/home/frappe/.pyenv/...` — a path that only
+   exists inside the Docker container, not on the WSL2 host.
+
+**Fix:** Follow the full [Optimized setup for WSL2 + VSCode](#optimized-setup-for-wsl2--vscode-recommended) steps above. In short:
+
+```bash
+# 1. Install pyenv + Python 3.14.2 on WSL2
+curl https://pyenv.run | bash
+# add pyenv init to ~/.zshrc, then:
+pyenv install 3.14.2
+
+# 2. Create /workspace symlink
+sudo ln -sf /path/to/frappe_builder /workspace
+
+# 3. In VSCode: Cmd/Ctrl+Shift+P → "Python: Select Interpreter"
+#    Enter: /home/<your-username>/.pyenv/versions/3.14.2/bin/python3
 ```
 
 ---

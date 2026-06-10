@@ -175,6 +175,13 @@ endif
 dev-ps: check-env ## Show running service status
 	$(COMPOSE) ps
 
+.PHONY: code
+code: ## Open an app folder in VSCode — usage: make code APP=nusakura_app
+ifndef APP
+	$(error Usage: make code APP=<app_name>)
+endif
+	code /workspace/development/frappe-bench/apps/$(APP)
+
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
