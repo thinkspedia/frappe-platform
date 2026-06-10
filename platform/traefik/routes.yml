@@ -1,0 +1,13 @@
+http:
+  routers:
+    frappe:
+      rule: "HostRegexp(`.+`)"
+      entryPoints:
+        - web
+      service: frappe
+
+  services:
+    frappe:
+      loadBalancer:
+        servers:
+          - url: "http://nginx:8000"

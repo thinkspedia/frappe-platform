@@ -1,34 +1,29 @@
 # =============================================================================
 # Frappe Platform — Local Development Stack
 #
-# Usage:
-#   org-bench dev start          (recommended — handles .env and path)
-#   docker compose -f platform/docker-compose.dev.yml --env-file platform/.env up -d
+# Image: frappe/bench — bare bench CLI with pyenv/nvm, no pre-installed apps.
 #
-# First run: the `bootstrap` service runs once to create the Frappe site and
-# install all apps. It exits with code 0; all other services wait for it.
+# The bench is initialised by the bootstrap service and lives at:
+#   (host)      frappe_builder/development/frappe-bench/
+#   (container) /workspace/development/frappe-bench/
 #
-# Subsequent runs: bootstrap detects the existing site and skips init.
+# Because the bench is on the host filesystem (via the workspace bind-mount),
+# app source code is directly editable without any per-app bind-mount tricks.
+# Edit apps/hrms, apps/nusakura_app, etc. directly on the host — changes
+# reflect immediately inside the container (same inode).
 #
-# Live reload: ./apps on your host is mounted into every service container.
-# Edit Python or JS files and Gunicorn/Webpack will pick them up immediately
-# (DEVELOPER_MODE=1 disables asset bundling requirement).
+# Usage (from platform/ directory):
+#   make dev-start         Start the full stack (bootstraps on first run)
+#   make dev-logs          Follow all logs
+#   make dev-shell         bash in frappe-web container
+#   make dev-destroy       Wipe bench + MariaDB (full reset)
 # =============================================================================
 
-x-frappe-dev: &frappe-dev
-  # Uses the `development` stage of platform/Dockerfile
-  build:
-    context: .
-    dockerfile: Dockerfile
-    target: development
-    args:
-      PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
-      NODE_VERSION: ${NODE_VERSION:-18.20.4}
-      FRAPPE_VERSION: ${FRAPPE_VERSION:-version-15}
-      FRAPPE_REPO: ${FRAPPE_REPO:-https://github.com/frappe/frappe}
-  image: ${IMAGE_REGISTRY:-ghcr.io/thinkspedia}/${IMAGE_NAME:-frappe-platform}:dev
+x-frappe: &frappe
+  image: frappe/bench:${FRAPPE_BENCH_TAG:-latest}
+  # Bench processes run from inside the bench directory.
+  working_dir: /workspace/development/frappe-bench
   environment:
-    DEVELOPER_MODE: "1"
     FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-dev.localhost}
     DB_HOST: ${DB_HOST:-mariadb}
     DB_PORT: ${DB_PORT:-3306}
@@ -36,12 +31,10 @@ x-frappe-dev: &frappe-dev
     REDIS_CACHE: ${REDIS_CACHE:-redis-cache:6379}
     REDIS_QUEUE: ${REDIS_QUEUE:-redis-queue:6379}
     REDIS_SOCKETIO: ${REDIS_SOCKETIO:-redis-socketio:6379}
-    HOST_NAME: ${HOST_NAME:-dev.localhost}
   volumes:
-    # Live-reload: host ./apps dir mounts over the container's apps dir.
-    # On first run this is empty; bootstrap.sh populates it.
-    - ./apps:/home/frappe/frappe-bench/apps
-    - sites:/home/frappe/frappe-bench/sites
+    # Mount the entire repo root so the bench (development/) and platform
+    # scripts are all accessible from a single, stable path.
+    - ..:/workspace:cached
   depends_on:
     bootstrap:
       condition: service_completed_successfully
@@ -50,29 +43,17 @@ x-frappe-dev: &frappe-dev
 services:
 
   # ---------------------------------------------------------------------------
-  # bootstrap — one-shot init service
-  # Runs scripts/bootstrap.sh which:
-  #   1. Writes common_site_config.json (DB/Redis endpoints)
-  #   2. Creates the Frappe site if it does not exist
-  #   3. Installs all apps listed in apps.json
-  #   4. Runs bench migrate
-  #   5. Exits 0 on success (all other services then start)
-  # On subsequent runs, bootstrap detects the existing site and exits 0 quickly.
+  # bootstrap — one-shot bench + site initialisation
+  # First run  : bench init, get-app all apps, new-site, install-app, migrate.
+  # Subsequent : detects existing site_config.json and exits 0 immediately.
   # ---------------------------------------------------------------------------
   bootstrap:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: development
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
-        NODE_VERSION: ${NODE_VERSION:-18.20.4}
-        FRAPPE_VERSION: ${FRAPPE_VERSION:-version-15}
-        FRAPPE_REPO: ${FRAPPE_REPO:-https://github.com/frappe/frappe}
-    image: ${IMAGE_REGISTRY:-ghcr.io/thinkspedia}/${IMAGE_NAME:-frappe-platform}:dev
-    command: ["/usr/local/bin/bootstrap.sh"]
+    image: frappe/bench:${FRAPPE_BENCH_TAG:-latest}
+    working_dir: /workspace
+    entrypoint: [bash, /workspace/platform/scripts/bootstrap.sh]
     environment:
       FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-dev.localhost}
+      FRAPPE_BRANCH: ${FRAPPE_BRANCH:-version-16}
       DB_HOST: ${DB_HOST:-mariadb}
       DB_PORT: ${DB_PORT:-3306}
       DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-changeme}
@@ -82,11 +63,9 @@ services:
       REDIS_SOCKETIO: ${REDIS_SOCKETIO:-redis-socketio:6379}
       SITE_ADMIN_PASSWORD: ${SITE_ADMIN_PASSWORD:-changeme}
       HOST_NAME: ${HOST_NAME:-dev.localhost}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     volumes:
-      - ./apps:/home/frappe/frappe-bench/apps
-      - sites:/home/frappe/frappe-bench/sites
-      # apps.json tells bootstrap which apps to install
-      - ./apps.json:/home/frappe/apps.json:ro
+      - ..:/workspace:cached
     depends_on:
       mariadb:
         condition: service_healthy
@@ -99,65 +78,91 @@ services:
     restart: "no"
 
   # ---------------------------------------------------------------------------
-  # frappe-web — Gunicorn WSGI server (port 8000)
-  # In DEVELOPER_MODE, gunicorn uses --reload so Python changes are picked up.
+  # nginx — single entry point on HTTP_PUBLISH_PORT (default 8000)
+  # Routes /socket.io/ → websocket:9000, everything else → frappe-web:8001.
+  # This is required: bench serve does not handle socket.io, and the browser
+  # must hit a single port for both HTTP and WebSocket connections.
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    # Not exposed directly — Traefik proxies to nginx:8000 on port 80.
+    # Access the site at http://dev.localhost (no port number needed).
+    #
+    # The network alias dev.localhost lets other containers (e.g. websocket)
+    # resolve http://dev.localhost:8000 via Docker DNS for internal API calls.
+    networks:
+      default:
+        aliases:
+          - ${HOST_NAME:-dev.localhost}
+    volumes:
+      - ./nginx/dev.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frappe-web
+      - websocket
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # frappe-web — werkzeug dev server via `bench serve`
+  # Listens on internal port 8001 (nginx proxies to it).
+  # bench serve includes SharedDataMiddleware which correctly serves /assets/.
+  # bench serve auto-reloads on Python changes when developer_mode=1.
   # ---------------------------------------------------------------------------
   frappe-web:
-    <<: *frappe-dev
+    <<: *frappe
     command:
       - bash
       - -c
       - |
-        gunicorn \
-          --chdir=/home/frappe/frappe-bench/sites \
-          --bind=0.0.0.0:8000 \
-          --workers=${GUNICORN_WORKERS:-1} \
-          --threads=${GUNICORN_THREADS:-4} \
-          --timeout=${GUNICORN_TIMEOUT:-300} \
-          --reload \
-          frappe.app:application
-    ports:
-      - "${HTTP_PUBLISH_PORT:-8080}:8000"
+        cd /workspace/development/frappe-bench
+        bench serve --port 8001
+    # Not exposed directly — access via nginx on HTTP_PUBLISH_PORT
 
   # ---------------------------------------------------------------------------
-  # websocket — Socket.IO server (port 9000)
+  # websocket — Socket.IO
   # ---------------------------------------------------------------------------
   websocket:
-    <<: *frappe-dev
+    <<: *frappe
     command:
-      - node
-      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+      - bash
+      - -c
+      - |
+        export NVM_DIR="/home/frappe/.nvm"
+        [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+        node /workspace/development/frappe-bench/apps/frappe/socketio.js
     ports:
       - "9000:9000"
 
   # ---------------------------------------------------------------------------
-  # Celery workers — three queues: default, long, short
+  # Celery workers
   # ---------------------------------------------------------------------------
   worker-default:
-    <<: *frappe-dev
-    command: bench worker --queue default
+    <<: *frappe
+    command: [bench, worker, --queue, default]
 
   worker-long:
-    <<: *frappe-dev
-    command: bench worker --queue long,default,short
+    <<: *frappe
+    command: [bench, worker, --queue, "long,default,short"]
 
   worker-short:
-    <<: *frappe-dev
-    command: bench worker --queue short,default
+    <<: *frappe
+    command: [bench, worker, --queue, "short,default"]
 
   # ---------------------------------------------------------------------------
-  # scheduler — Celery Beat (cron-like periodic tasks)
+  # scheduler — Celery Beat
   # ---------------------------------------------------------------------------
   scheduler:
-    <<: *frappe-dev
-    command: bench schedule
+    <<: *frappe
+    command: [bench, schedule]
 
   # ---------------------------------------------------------------------------
-  # mariadb — database
-  # Frappe-specific settings: utf8mb4 charset, large packet size.
+  # mariadb
   # ---------------------------------------------------------------------------
   mariadb:
     image: mariadb:10.6
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-changeme}
       MYSQL_USER: frappe
@@ -173,7 +178,7 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Redis — three instances for isolation (cache, queue, socketio)
+  # Redis — three isolated instances (cache, queue, socketio)
   # ---------------------------------------------------------------------------
   redis-cache:
     image: redis:7-alpine
@@ -188,26 +193,29 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # traefik — reverse proxy / load balancer
-  # Accessible at http://dev.localhost (add to /etc/hosts: 127.0.0.1 dev.localhost)
-  # Traefik dashboard at http://localhost:8082
+  # traefik — reverse proxy
+  # App:       http://dev.localhost  (add 127.0.0.1 dev.localhost to /etc/hosts)
+  # Dashboard: http://localhost:8082
   # ---------------------------------------------------------------------------
   traefik:
     image: traefik:v3.0
+    # Use file provider instead of Docker provider.
+    # Docker Desktop (WSL2 + macOS) blocks the /events stream that the Docker
+    # provider needs, causing continuous "Error response from daemon" log spam.
+    # Static file routing is simpler and works identically on all platforms.
     command:
       - "--api.insecure=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.filename=/etc/traefik/routes.yml"
+      - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
     ports:
-      - "80:80"
-      - "8082:8080"
+      # TRAEFIK_HTTP_PORT defaults to 80.
+      # On Linux without root, set to a high port (e.g. 8080) in .env.
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_DASHBOARD_PORT:-8082}:8080"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik:/etc/traefik:ro
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
 
 volumes:
-  sites:
   mariadb-data:

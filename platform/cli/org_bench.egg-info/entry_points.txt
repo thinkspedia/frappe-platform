@@ -1,0 +1,2 @@
+[console_scripts]
+org-bench = org_bench:cli

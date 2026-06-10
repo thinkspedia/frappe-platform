@@ -10,7 +10,7 @@
 # =============================================================================
 set -e
 
-BENCH_DIR="/home/frappe/frappe-bench"
+BENCH_DIR="${BENCH_DIR:-/workspace/development/frappe-bench}"
 SITE="${FRAPPE_SITE_NAME:?FRAPPE_SITE_NAME is required}"
 HOST="${HOST_NAME:?HOST_NAME is required}"
 
