@@ -1,0 +1,15 @@
+[mysqld]
+# Frappe requires utf8mb4 with 4-byte unicode support
+character-set-client-handshake = FALSE
+character-set-server            = utf8mb4
+collation-server                = utf8mb4_unicode_ci
+
+# Allow large packets for file attachments and long text fields
+max_allowed_packet              = 256M
+
+# InnoDB settings recommended for Frappe
+innodb_file_per_table           = 1
+innodb_buffer_pool_size         = 256M
+
+[mysql]
+default-character-set           = utf8mb4

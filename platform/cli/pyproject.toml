@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "org-bench"
+version = "0.1.0"
+description = "Unified Frappe platform CLI for development and deployment"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+    "rich>=13.0",
+]
+
+[project.scripts]
+org-bench = "org_bench:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["org_bench*"]

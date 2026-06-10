@@ -1,0 +1,14 @@
+[
+  {
+    "url": "https://github.com/frappe/erpnext.git",
+    "branch": "version-15"
+  },
+  {
+    "url": "https://github.com/thinkspedia/nusakura_app.git",
+    "branch": "main"
+  },
+  {
+    "url": "https://github.com/thinkspedia/nusakura_waha_app.git",
+    "branch": "main"
+  }
+]

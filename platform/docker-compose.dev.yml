@@ -1,0 +1,213 @@
+# =============================================================================
+# Frappe Platform — Local Development Stack
+#
+# Usage:
+#   org-bench dev start          (recommended — handles .env and path)
+#   docker compose -f platform/docker-compose.dev.yml --env-file platform/.env up -d
+#
+# First run: the `bootstrap` service runs once to create the Frappe site and
+# install all apps. It exits with code 0; all other services wait for it.
+#
+# Subsequent runs: bootstrap detects the existing site and skips init.
+#
+# Live reload: ./apps on your host is mounted into every service container.
+# Edit Python or JS files and Gunicorn/Webpack will pick them up immediately
+# (DEVELOPER_MODE=1 disables asset bundling requirement).
+# =============================================================================
+
+x-frappe-dev: &frappe-dev
+  # Uses the `development` stage of platform/Dockerfile
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: development
+    args:
+      PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
+      NODE_VERSION: ${NODE_VERSION:-18.20.4}
+      FRAPPE_VERSION: ${FRAPPE_VERSION:-version-15}
+      FRAPPE_REPO: ${FRAPPE_REPO:-https://github.com/frappe/frappe}
+  image: ${IMAGE_REGISTRY:-ghcr.io/thinkspedia}/${IMAGE_NAME:-frappe-platform}:dev
+  environment:
+    DEVELOPER_MODE: "1"
+    FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-dev.localhost}
+    DB_HOST: ${DB_HOST:-mariadb}
+    DB_PORT: ${DB_PORT:-3306}
+    DB_PASSWORD: ${DB_PASSWORD:-frappe}
+    REDIS_CACHE: ${REDIS_CACHE:-redis-cache:6379}
+    REDIS_QUEUE: ${REDIS_QUEUE:-redis-queue:6379}
+    REDIS_SOCKETIO: ${REDIS_SOCKETIO:-redis-socketio:6379}
+    HOST_NAME: ${HOST_NAME:-dev.localhost}
+  volumes:
+    # Live-reload: host ./apps dir mounts over the container's apps dir.
+    # On first run this is empty; bootstrap.sh populates it.
+    - ./apps:/home/frappe/frappe-bench/apps
+    - sites:/home/frappe/frappe-bench/sites
+  depends_on:
+    bootstrap:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # bootstrap — one-shot init service
+  # Runs scripts/bootstrap.sh which:
+  #   1. Writes common_site_config.json (DB/Redis endpoints)
+  #   2. Creates the Frappe site if it does not exist
+  #   3. Installs all apps listed in apps.json
+  #   4. Runs bench migrate
+  #   5. Exits 0 on success (all other services then start)
+  # On subsequent runs, bootstrap detects the existing site and exits 0 quickly.
+  # ---------------------------------------------------------------------------
+  bootstrap:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+      args:
+        PYTHON_VERSION: ${PYTHON_VERSION:-3.11}
+        NODE_VERSION: ${NODE_VERSION:-18.20.4}
+        FRAPPE_VERSION: ${FRAPPE_VERSION:-version-15}
+        FRAPPE_REPO: ${FRAPPE_REPO:-https://github.com/frappe/frappe}
+    image: ${IMAGE_REGISTRY:-ghcr.io/thinkspedia}/${IMAGE_NAME:-frappe-platform}:dev
+    command: ["/usr/local/bin/bootstrap.sh"]
+    environment:
+      FRAPPE_SITE_NAME: ${FRAPPE_SITE_NAME:-dev.localhost}
+      DB_HOST: ${DB_HOST:-mariadb}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-changeme}
+      DB_PASSWORD: ${DB_PASSWORD:-frappe}
+      REDIS_CACHE: ${REDIS_CACHE:-redis-cache:6379}
+      REDIS_QUEUE: ${REDIS_QUEUE:-redis-queue:6379}
+      REDIS_SOCKETIO: ${REDIS_SOCKETIO:-redis-socketio:6379}
+      SITE_ADMIN_PASSWORD: ${SITE_ADMIN_PASSWORD:-changeme}
+      HOST_NAME: ${HOST_NAME:-dev.localhost}
+    volumes:
+      - ./apps:/home/frappe/frappe-bench/apps
+      - sites:/home/frappe/frappe-bench/sites
+      # apps.json tells bootstrap which apps to install
+      - ./apps.json:/home/frappe/apps.json:ro
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_started
+      redis-queue:
+        condition: service_started
+      redis-socketio:
+        condition: service_started
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # frappe-web — Gunicorn WSGI server (port 8000)
+  # In DEVELOPER_MODE, gunicorn uses --reload so Python changes are picked up.
+  # ---------------------------------------------------------------------------
+  frappe-web:
+    <<: *frappe-dev
+    command:
+      - bash
+      - -c
+      - |
+        gunicorn \
+          --chdir=/home/frappe/frappe-bench/sites \
+          --bind=0.0.0.0:8000 \
+          --workers=${GUNICORN_WORKERS:-1} \
+          --threads=${GUNICORN_THREADS:-4} \
+          --timeout=${GUNICORN_TIMEOUT:-300} \
+          --reload \
+          frappe.app:application
+    ports:
+      - "${HTTP_PUBLISH_PORT:-8080}:8000"
+
+  # ---------------------------------------------------------------------------
+  # websocket — Socket.IO server (port 9000)
+  # ---------------------------------------------------------------------------
+  websocket:
+    <<: *frappe-dev
+    command:
+      - node
+      - /home/frappe/frappe-bench/apps/frappe/socketio.js
+    ports:
+      - "9000:9000"
+
+  # ---------------------------------------------------------------------------
+  # Celery workers — three queues: default, long, short
+  # ---------------------------------------------------------------------------
+  worker-default:
+    <<: *frappe-dev
+    command: bench worker --queue default
+
+  worker-long:
+    <<: *frappe-dev
+    command: bench worker --queue long,default,short
+
+  worker-short:
+    <<: *frappe-dev
+    command: bench worker --queue short,default
+
+  # ---------------------------------------------------------------------------
+  # scheduler — Celery Beat (cron-like periodic tasks)
+  # ---------------------------------------------------------------------------
+  scheduler:
+    <<: *frappe-dev
+    command: bench schedule
+
+  # ---------------------------------------------------------------------------
+  # mariadb — database
+  # Frappe-specific settings: utf8mb4 charset, large packet size.
+  # ---------------------------------------------------------------------------
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-changeme}
+      MYSQL_USER: frappe
+      MYSQL_PASSWORD: ${DB_PASSWORD:-frappe}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./scripts/mariadb.cnf:/etc/mysql/conf.d/frappe.cnf:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "--password=${DB_ROOT_PASSWORD:-changeme}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Redis — three instances for isolation (cache, queue, socketio)
+  # ---------------------------------------------------------------------------
+  redis-cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  redis-queue:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  redis-socketio:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # traefik — reverse proxy / load balancer
+  # Accessible at http://dev.localhost (add to /etc/hosts: 127.0.0.1 dev.localhost)
+  # Traefik dashboard at http://localhost:8082
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8082:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+
+volumes:
+  sites:
+  mariadb-data:
