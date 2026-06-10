@@ -25,6 +25,10 @@ SHELL := /bin/bash
 -include .env
 export
 
+# COMPOSE_PROFILES enables optional service groups.
+# Set COMPOSE_PROFILES= (empty) in .env to disable all optional tools.
+COMPOSE_PROFILES ?= tools
+export COMPOSE_PROFILES
 COMPOSE      := docker compose -f docker-compose.dev.yml --env-file .env
 PLATFORM_DIR := $(shell pwd)
 ENV_FILE     := $(PLATFORM_DIR)/.env
@@ -76,7 +80,14 @@ dev-setup: ## Initialise .env, pull base images, check /etc/hosts
 
 .PHONY: dev-start
 dev-start: check-env ## Build images (if needed) and start the full local stack
-	$(ORG_BENCH) dev start
+	$(COMPOSE) up -d
+	@echo ""
+	@echo "  Web:       http://$${HOST_NAME:-dev.localhost}"
+	@echo "  Adminer:   http://localhost:$${ADMINER_PORT:-8081}  (root / $${DB_ROOT_PASSWORD:-changeme})"
+	@echo "  Mailpit:   http://localhost:$${MAILPIT_UI_PORT:-8025}"
+	@echo "  Traefik:   http://localhost:$${TRAEFIK_DASHBOARD_PORT:-8082}"
+	@echo "  Logs:      docker compose -f platform/docker-compose.dev.yml logs -f"
+	@echo ""
 
 .PHONY: dev-stop
 dev-stop: check-env ## Stop the stack, preserve data volumes

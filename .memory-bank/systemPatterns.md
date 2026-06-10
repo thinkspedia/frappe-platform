@@ -40,8 +40,10 @@ Browser → Traefik:80 → nginx:8000
                          ├── /socket.io/* → websocket:9000  (WebSocket upgrade)
                          └── /*           → frappe-web:8001 (bench serve)
 ```
-nginx has Docker network alias matching `HOST_NAME` (e.g. `dev.localhost`) so other containers
-can resolve `http://dev.localhost:8000` for internal API calls (used by websocket auth).
+Traefik (not nginx) carries the `HOST_NAME` Docker network alias (e.g. `dev.localhost`).
+This is intentional: `webserver_port=80` in common_site_config means internal containers
+that resolve `dev.localhost:80` reach Traefik → nginx → frappe-web correctly, and Frappe
+email URL generation produces `http://dev.localhost` without a port suffix.
 
 ## Traefik Pattern: File Provider (not Docker provider)
 
@@ -53,11 +55,33 @@ Routes everything to nginx, which handles the web/socket split.
 
 Set globally via `bench set-config -g`:
 - `db_host`, `db_port` — MariaDB container service name
-- `redis_cache/queue/socketio` — Redis container service names  
+- `redis_cache/queue/socketio` — Redis container service names
 - `developer_mode = 1` — enables hot reload, disables caching
 - `socketio_port = 9000` — for socketio client URL construction
-- `webserver_port = 8000` — Frappe's `realtime/utils.js` uses this to build internal API URL
-- `host_name = http://dev.localhost` — required by socketio for origin validation (reads global config, not site config)
+- `webserver_port = 80` — must match the public entry point (Traefik:80); Frappe appends
+  this to `host_name` when building email URLs — setting 8000 causes broken `:8000` links
+- `host_name = http://dev.localhost` — required by socketio for origin validation (reads
+  global config, not per-site config)
+
+## App Versioning Pattern
+
+Both `nusakura_app` and `nusakura_waha_app` use identical versioning:
+- Version stored in `<app>/__init__.py` as `__version__`
+- `pyproject.toml` uses `flit_core` with `dynamic = ["version"]` — single source of truth
+- `scripts/bump_version.py` reads Conventional Commits since last git tag to auto-detect bump type
+- `Makefile` targets: `version-current`, `version-next`, `version-bump`, `release-version`
+- `make release-version` — updates `__init__.py`, commits `chore(release): vX.Y.Z`, creates git tag
+- After release: `git push origin main --tags`
+- Conventional Commit → bump: `feat!`/`BREAKING CHANGE` → major, `feat` → minor, `fix`/`perf`/`refactor` → patch
+
+## Mailpit Email Trap Pattern
+
+Mailpit runs as an optional `tools` profile service on `mailpit:1025` (SMTP).
+Frappe Email Account must be configured with dummy credentials (not Awaiting Password):
+- SMTP Server: `mailpit`, Port: `1025`, no TLS/SSL
+- Login ID: `test`, Password: `mailpit`
+- `MP_SMTP_AUTH_ACCEPT_ANY=1` accepts any credentials
+- Awaiting Password checkbox bypasses save validation but fails at send time — do not use it
 
 ## Security Pattern: Secrets at Runtime
 

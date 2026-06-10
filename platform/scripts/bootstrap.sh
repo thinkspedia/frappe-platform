@@ -105,14 +105,11 @@ bench set-config -g  redis_queue     "redis://${REDIS_QUEUE}"
 bench set-config -g  redis_socketio  "redis://${REDIS_SOCKETIO}"
 bench set-config -gp socketio_port   9000
 bench set-config -gp developer_mode  1
-# webserver_port: used by socketio's get_url() in developer_mode to call the
-# Frappe API for socket auth. Must match nginx's internal container port (8000)
-# since nginx has a Docker network alias of HOST_NAME (e.g. dev.localhost),
-# making http://dev.localhost:8000 resolvable from within the Docker network.
-# webserver_port: used by socketio's get_url() in developer_mode to build the
-# Frappe API URL for socket auth → http://dev.localhost:8000/api/...
-# nginx has a Docker network alias matching HOST_NAME so this resolves internally.
-bench set-config -gp webserver_port  8000
+# webserver_port=80: Traefik (the public entry point) listens on port 80 and
+# carries the HOST_NAME Docker network alias. Setting 80 here ensures Frappe
+# builds correct email URLs (http://dev.localhost, no port suffix) and socketio's
+# get_url() resolves http://dev.localhost:80 → Traefik → nginx → frappe-web.
+bench set-config -gp webserver_port  80
 # socketio.js reads host_name from common_site_config (global), not site_config.
 bench set-config -g  host_name       "http://${HOST_NAME:-dev.localhost}"
 

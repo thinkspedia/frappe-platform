@@ -25,21 +25,23 @@
 
 ## Dev Stack Service Map
 
-| Service | Image | Internal Port | External |
-|---|---|---|---|
-| `traefik` | traefik:v3.0 | 80 | `${TRAEFIK_HTTP_PORT:-80}` |
-| `nginx` | nginx:alpine | 8000 | none (via Traefik) |
-| `frappe-web` | frappe/bench | 8001 | none (via nginx) |
-| `websocket` | frappe/bench | 9000 | `9000` |
-| `worker-default` | frappe/bench | — | none |
-| `worker-long` | frappe/bench | — | none |
-| `worker-short` | frappe/bench | — | none |
-| `scheduler` | frappe/bench | — | none |
-| `mariadb` | mariadb:10.6 | 3306 | none |
-| `redis-cache` | redis:7-alpine | 6379 | none |
-| `redis-queue` | redis:7-alpine | 6379 | none |
-| `redis-socketio` | redis:7-alpine | 6379 | none |
-| `bootstrap` | frappe/bench | — | none (one-shot) |
+| Service | Image | Internal Port | External | Notes |
+|---|---|---|---|---|
+| `traefik` | traefik:v3.0 | 80 | `${TRAEFIK_HTTP_PORT:-80}` | Carries `dev.localhost` alias |
+| `nginx` | nginx:alpine | 8000 | none (via Traefik) | Splits web/socketio |
+| `frappe-web` | frappe/bench | 8001 | none (via nginx) | |
+| `websocket` | frappe/bench | 9000 | `9000` | |
+| `worker-default` | frappe/bench | — | none | |
+| `worker-long` | frappe/bench | — | none | |
+| `worker-short` | frappe/bench | — | none | |
+| `scheduler` | frappe/bench | — | none | |
+| `mariadb` | mariadb:10.6 | 3306 | none | |
+| `redis-cache` | redis:7-alpine | 6379 | none | |
+| `redis-queue` | redis:7-alpine | 6379 | none | |
+| `redis-socketio` | redis:7-alpine | 6379 | none | |
+| `bootstrap` | frappe/bench | — | none (one-shot) | |
+| `adminer` | adminer:latest | 8080 | `${ADMINER_PORT:-8081}` | profile: tools |
+| `mailpit` | axllent/mailpit | 8025/1025 | `${MAILPIT_UI_PORT:-8025}` / `${MAILPIT_SMTP_PORT:-1025}` | profile: tools |
 
 ## Frappe Apps in Platform
 
@@ -66,7 +68,12 @@
 | `platform/traefik/routes.yml` | Traefik static routes |
 | `platform/Makefile` | All dev commands |
 | `platform/Dockerfile` | Multi-stage production image |
+| `platform/docs/developer-workflow.md` | Developer workflow source of truth |
 | `development/frappe-bench/` | Bench dir — gitignored, created by bootstrap |
+| `development/frappe-bench/apps/nusakura_app/Makefile` | Version bump targets |
+| `development/frappe-bench/apps/nusakura_app/scripts/bump_version.py` | Conventional Commit version script |
+| `development/frappe-bench/apps/nusakura_waha_app/Makefile` | Version bump targets (same as above) |
+| `development/frappe-bench/apps/nusakura_waha_app/scripts/bump_version.py` | Conventional Commit version script |
 
 ## Environment Variables (`.env`)
 
