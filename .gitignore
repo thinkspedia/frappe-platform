@@ -1,34 +1,21 @@
-# Environment Variables
+# Environment
 .env
+platform/.env
 
-# mounted volume
-sites
-
-development/*
-!development/README.md
-!development/installer.py
-!development/apps-example.json
-!development/vscode-example/
-
-# Pycharm
-.idea
-
-# VS Code
-.vscode/**
-!.vscode/extensions.json
-
-# VS Code devcontainer
-.devcontainer
-*.code-workspace
+# Bench directory — created by bootstrap on first `make dev-start`
+development/frappe-bench/
 
 # Python
 *.pyc
-__pycache__
-venv
+__pycache__/
+venv/
+.venv/
 
-# NodeJS
-node_modules
+# VSCode workspace files
+*.code-workspace
 
-# VitePress
-**/.vitepress/dist
-**/.vitepress/cache
+# macOS
+.DS_Store
+
+# JetBrains
+.idea/
