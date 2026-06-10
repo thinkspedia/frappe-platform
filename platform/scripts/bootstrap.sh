@@ -109,6 +109,9 @@ bench set-config -gp developer_mode  1
 # Frappe API for socket auth. Must match nginx's internal container port (8000)
 # since nginx has a Docker network alias of HOST_NAME (e.g. dev.localhost),
 # making http://dev.localhost:8000 resolvable from within the Docker network.
+# webserver_port: used by socketio's get_url() in developer_mode to build the
+# Frappe API URL for socket auth → http://dev.localhost:8000/api/...
+# nginx has a Docker network alias matching HOST_NAME so this resolves internally.
 bench set-config -gp webserver_port  8000
 # socketio.js reads host_name from common_site_config (global), not site_config.
 bench set-config -g  host_name       "http://${HOST_NAME:-dev.localhost}"
