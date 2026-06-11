@@ -182,7 +182,10 @@ services:
   # frontend — nginx: serves assets, proxies /socket.io → websocket
   # ---------------------------------------------------------------------------
   frontend:
-    <<: [*custom_image, *bench_volume, *network]
+    <<: [*custom_image, *bench_volume]
+    networks:
+      - bench-network    # must be explicit — Dokploy replaces network config for port-exposed services
+      - dokploy-network  # Dokploy's reverse-proxy network
     entrypoint: ["bash", "-c"]
     command:
       - >
@@ -332,3 +335,6 @@ volumes:
 
 networks:
   bench-network:
+  dokploy-network:
+    external: true
+    name: dokploy-network
