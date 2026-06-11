@@ -161,10 +161,15 @@ services:
   # ---------------------------------------------------------------------------
   frontend:
     <<: [*custom_image, *bench_volume, *network]
-    command: [nginx-entrypoint.sh]
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        wait-for-it -t 120 backend:8000;
+        wait-for-it -t 120 websocket:9000;
+        exec /usr/local/bin/entrypoint.sh nginx-entrypoint.sh
     depends_on:
       backend:
-        condition: service_healthy
+        condition: service_started
         required: true
       websocket:
         condition: service_started
