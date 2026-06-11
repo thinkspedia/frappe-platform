@@ -63,11 +63,28 @@
   - Root cause: `authenticate.js` missing `return` + absent `Origin` header on polling
   - Does not affect staging/production. **Do NOT patch frappe/erpnext source.**
 
+## Dokploy Production Deployment (Completed 2026-06-11)
+- [x] `platform/dokploy/docker-compose.yml` — production compose manifest
+- [x] `platform/scripts/dokploy-deploy.sh` — API integration (project lookup, env update, redeploy, poll)
+- [x] `make deploy-dokploy` — full build+push+redeploy
+- [x] `make push-deploy-dokploy` — push pre-built image + redeploy
+- [x] `make build` / `make push` / `make build-push` — granular targets
+- [x] `make dokploy-status` — live status check
+- [x] First successful deploy: `nusakura-erp-stg:v1.0.0` → running
+
 ## What Is Planned But Not Yet Implemented
 - [ ] `platform/nomad/frappe.nomad.hcl` — Nomad job spec
-- [ ] `platform/dokploy/dokploy.yml` — Dokploy compose manifest
-- [ ] GitHub Actions CI — image build + push to Harbor registry
+- [ ] GitHub Actions CI — image build + push to Harbor on git tag
+- [ ] Production environment deployment (`nusakura-erp-prod`)
 - [ ] `platform/cli/` — org-bench CLI
+
+## Known Constraints and Gotchas (Dokploy-specific)
+
+14. **Dokploy API uses `x-api-key` header** — NOT `Authorization: Bearer`. Scripts/curl must use `-H "x-api-key: <token>"`.
+15. **`compose.all` endpoint does not exist in Dokploy** — compose services are nested under `project.all` response: `environments[].compose[]`.
+16. **Harbor internal CA on Dokploy VPS** — Docker daemon cannot pull from `registry.corp.thinkspedia.id` until CA cert is installed: `sudo mkdir -p /etc/docker/certs.d/registry.corp.thinkspedia.id && sudo cp ca.crt /etc/docker/certs.d/registry.corp.thinkspedia.id/ca.crt`. No Docker restart needed.
+17. **Dokploy registry credentials** — must be added in Dokploy UI (Settings → Registries) separately from VPS cert trust.
+18. **Dokploy `compose.update` sets env vars** — `IMAGE_TAG` is updated in the Dokploy compose env before each redeploy. This is how image version is pinned per deploy.
 
 ## Known Constraints and Gotchas
 
@@ -113,3 +130,7 @@
 | 2026-06-10 | All git push/pull corrected to `upstream` remote throughout all docs |
 | 2026-06-10 | Pushed frappe-platform to `github.com/thinkspedia/frappe-platform` |
 | 2026-06-10 | Removed all upstream frappe_docker files (130 files), rewrote README.md |
+| 2026-06-11 | Built Dokploy production deployment pipeline (dokploy-deploy.sh, Makefile targets) |
+| 2026-06-11 | Fixed: Dokploy API auth header (`x-api-key`), compose.all → project.all lookup |
+| 2026-06-11 | Fixed: Harbor CA cert on VPS + Dokploy registry credentials |
+| 2026-06-11 | First successful deploy: nusakura-erp-stg:v1.0.0 → running |

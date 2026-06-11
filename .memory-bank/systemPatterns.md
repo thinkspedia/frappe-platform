@@ -164,3 +164,29 @@ export NVM_DIR="/home/frappe/.nvm" && source "$NVM_DIR/nvm.sh"
 ```
 Asset symlinks use absolute container paths (`/workspace/...`) — broken on host, valid
 inside container. This is expected.
+
+## Dokploy Deployment Pattern
+
+Production runs on Dokploy via `platform/dokploy/docker-compose.yml`.
+
+**Image versioning**: `IMAGE_TAG` env var is updated in Dokploy's compose env via API before each redeploy.
+Compose file references `${IMAGE_REGISTRY}/nusakuraerp:${IMAGE_TAG:-latest}`.
+
+**Deploy flow**:
+```
+make build tag=v1.0.0        # build locally
+make push-deploy-dokploy tag=v1.0.0  # push to Harbor + trigger Dokploy redeploy
+```
+
+**Dokploy API quirks** (as of 2026-06):
+- Auth header: `x-api-key: <token>` (NOT `Authorization: Bearer`)
+- No `compose.all` endpoint — compose services nested under `project.all` → `environments[].compose[]`
+- Compose lookup: match project by `name`, then take first compose's `composeId`
+
+**Harbor registry trust on VPS**:
+- Install CA cert: `/etc/docker/certs.d/registry.corp.thinkspedia.id/ca.crt`
+- Also add registry credentials in Dokploy UI → Settings → Registries
+
+**Staging project identifiers**:
+- Project: `nusakura-erp-stg` (projectId: `5lDuFK1Ht5u7DqGKwsy1u`)
+- Compose: `ERPNext App` (composeId: `gFL17GQy7kJI-RzFev-lo`)

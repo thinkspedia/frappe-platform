@@ -1,12 +1,29 @@
 # Active Context
 
-## Current State (2026-06-10)
+## Current State (2026-06-11)
 
-The platform is fully working end-to-end for local development. The entire developer
-experience is documented, the VSCode setup is auto-configured, and the GitHub repos
-are clean and published.
+The platform is fully working end-to-end for both local development and Dokploy production
+deployment. The first successful deployment to `nusakura-erp-stg` was completed today.
 
 ## What Was Just Completed
+
+### Dokploy Production Deployment Pipeline
+- `make deploy-dokploy tag=v1.0.0` — full build + push + redeploy in one command
+- `make push-deploy-dokploy tag=v1.0.0` — push pre-built image + redeploy (skip rebuild)
+- `make build` / `make push` / `make build-push` — granular build/push control
+- `make dokploy-status` — check live Dokploy compose status
+
+**Fixes discovered during first deploy:**
+- Dokploy API uses `x-api-key` header, NOT `Authorization: Bearer`
+- `compose.all` endpoint does not exist — compose services are nested under `project.all` → `environments[].compose[]`
+- Harbor registry (`registry.corp.thinkspedia.id`) uses internal CA — VPS Docker daemon needs `/etc/docker/certs.d/<registry>/ca.crt` installed
+- Dokploy must have the registry credentials configured under Settings → Registries
+
+**Staging deployment confirmed working:**
+- Project: `nusakura-erp-stg` (projectId: `5lDuFK1Ht5u7DqGKwsy1u`)
+- Compose: `ERPNext App` (composeId: `gFL17GQy7kJI-RzFev-lo`)
+- Image: `registry.corp.thinkspedia.id/frappe/nusakura/nusakuraerp:v1.0.0`
+- Status: `running` ✓
 
 ### Developer Workflow
 - `platform/docs/developer-workflow.md` is the source of truth for all dev scenarios
@@ -54,7 +71,8 @@ are clean and published.
 
 ## Next Recommended Actions
 - [ ] `platform/nomad/frappe.nomad.hcl` — Nomad job spec (prestart migrate, zero-downtime)
-- [ ] `platform/dokploy/dokploy.yml` — Dokploy compose manifest
-- [ ] GitHub Actions CI for image build + push to Harbor registry
-- [ ] Production environment `.env` and deployment docs
+- [ ] GitHub Actions CI — automated image build + push to Harbor on tag push
+- [ ] Production environment (separate from staging) — `nusakura-erp-prod`
+- [ ] `make prod-new-site` — run once to bootstrap the staging site in Dokploy
 - [ ] `platform/cli/` — org-bench CLI (dev setup / build / deploy commands)
+- [ ] Document Dokploy VPS CA cert setup in `developer-workflow.md`

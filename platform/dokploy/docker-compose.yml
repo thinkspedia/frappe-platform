@@ -16,6 +16,11 @@ x-image: &image
   pull_policy: ${PULL_POLICY:-always}
   restart: ${RESTART_POLICY:-unless-stopped}
 
+x-nginx-image: &nginx_image
+  image: frappe/erpnext:${FRAPPE_BRANCH:-version-16}
+  pull_policy: ${PULL_POLICY:-always}
+  restart: ${RESTART_POLICY:-unless-stopped}
+
 x-depends-configurator: &depends_configurator
   depends_on:
     configurator:
@@ -101,7 +106,7 @@ services:
   # frontend — nginx: serves assets, proxies /socket.io → websocket, rest → backend
   # ---------------------------------------------------------------------------
   frontend:
-    <<: *image
+    <<: *nginx_image
     platform: linux/amd64
     command: [nginx-entrypoint.sh]
     environment:
@@ -116,7 +121,7 @@ services:
     volumes:
       - sites:/home/frappe/frappe-bench/sites
     ports:
-      - "${HTTP_PUBLISH_PORT:-8080}:8080"
+      - "${HTTP_PUBLISH_PORT:-8888}:8080"
     depends_on:
       - backend
       - websocket
