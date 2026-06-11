@@ -106,6 +106,12 @@ services:
     depends_on:
       configurator:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/method/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # frontend — nginx: serves assets, proxies /socket.io → websocket, rest → backend
@@ -128,8 +134,10 @@ services:
     ports:
       - "${HTTP_PUBLISH_PORT:-8888}:8080"
     depends_on:
-      - backend
-      - websocket
+      backend:
+        condition: service_healthy
+      websocket:
+        condition: service_started
 
   # ---------------------------------------------------------------------------
   # websocket — Socket.IO node server
