@@ -93,6 +93,10 @@
 23. **Reload Traefik after adding Dokploy UI domain** — new router is not picked up until Settings → Traefik → Reload is clicked.
 24. **`deploy.replicas: 0` is Swarm-only** — does not skip services in plain `docker compose up`. Use env-var gate inside the command (`[ "$CREATE_SITE" != "1" ] && exit 0`) instead.
 25. **Post-install: set `home_page` in DB** — freshly created Frappe sites have `System Settings.home_page = NULL`. Python omits the key from boot JSON entirely, so `frappe.boot.home_page` is JavaScript `undefined` → router navigates to `/undefined`. Fix: `frappe.db.set_value('System Settings', 'System Settings', 'home_page', 'workspace')` in bench console.
+26. **Post-restore: Administrator "Not Permitted"** — `bench restore` strips the Administrator user's roles. Symptoms: login succeeds but every page shows "Not Permitted". Fix via bench console: `user = frappe.get_doc('User', 'Administrator'); user.add_roles('System Manager', 'Administrator'); frappe.db.commit()`. Then `clear-cache`. If still broken, run `bench migrate`.
+27. **Post-restore: set `host_name` to new domain** — restored DB has old hostname baked into System Settings. Fix: `frappe.db.set_value('System Settings', 'System Settings', 'host_name', 'https://<new-domain>')`.
+28. **Frappe backup files are `.tar` not `.tar.gz`** — `bench backup --with-files` produces plain `.tar` archives for public/private files (not gzipped). `bench restore` handles both formats — pass as-is with `--with-public-files` / `--with-private-files`.
+29. **Administrator is hidden in Users list** — does not appear in normal user list. Filter by System User = Yes to find it. Login with username `Administrator` (not email) if email was changed.
 
 ## Known Constraints and Gotchas
 
@@ -151,3 +155,6 @@
 | 2026-06-11 | Fixed: home_page set in System Settings + Website Settings via bench console |
 | 2026-06-11 | Staging live: https://nusakura-stg.erp.thinkspedia.id — SSL ✓ |
 | 2026-06-11 | Created platform/docs/dokploy-deployment.md — full deployment guide |
+| 2026-06-11 | Full site migration: stg-erp-nusakura.artavica.com → nusakura-stg.erp.thinkspedia.id (backup + restore) |
+| 2026-06-11 | Fixed: Administrator "Not Permitted" post-restore — roles must be re-added via bench console |
+| 2026-06-11 | Runbook saved: docs/superpowers/plans/2026-06-11-erpnext-backup-restore-stg.md |

@@ -8,6 +8,32 @@ accessible. Deployment guide documented at `platform/docs/dokploy-deployment.md`
 
 ## What Was Just Completed
 
+### ERPNext Site Migration: stg-erp-nusakura.artavica.com → nusakura-stg.erp.thinkspedia.id (2026-06-11)
+
+Full backup and restore of an existing ERPNext site onto the Dokploy VPS. Completed successfully.
+
+**Steps performed:**
+1. `docker cp` backup files out of source container (`nsk-backend-1`) to host `/home/opsadmin/backup/`
+2. SCP 4 files to Dokploy VPS via Netbird (`100.85.56.146` → `100.85.203.161`) using `opsadmin` + `/run/keys/id_ansible`
+3. `docker cp` files into target backend container's `private/backups/` dir
+4. `bench --site nusakura-stg.erp.thinkspedia.id restore <db.gz> --with-public-files <files.tar> --with-private-files <private-files.tar>`
+5. Post-restore bench console fixes: `host_name`, `home_page` (System + Website Settings), clear-cache, Traefik reload
+6. Fixed Administrator "Not Permitted" error — roles stripped during restore, re-added via bench console
+
+**Key discovery — Administrator "Not Permitted" after restore:**
+The Administrator user exists after restore but loses its roles. Fix:
+```python
+frappe.db.set_value('User', 'Administrator', 'user_type', 'System User')
+user = frappe.get_doc('User', 'Administrator')
+user.add_roles('System Manager', 'Administrator')
+frappe.db.commit()
+```
+Then `bench --site <site> clear-cache`. If still broken: `bench --site <site> migrate`.
+
+**Backup file format:** Frappe produces `.tar` (not `.tar.gz`) for files archives. `bench restore` handles both — pass as-is.
+
+**Runbook saved at:** `docs/superpowers/plans/2026-06-11-erpnext-backup-restore-stg.md`
+
 ### Dokploy Production Deployment Pipeline
 - `make deploy-dokploy tag=v1.0.0` — full build + push + redeploy in one command
 - `make push-deploy-dokploy tag=v1.0.0` — push pre-built image + redeploy (skip rebuild)
