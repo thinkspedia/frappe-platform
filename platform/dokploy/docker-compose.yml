@@ -184,7 +184,10 @@ services:
   # frontend — nginx: serves assets, proxies /socket.io → websocket
   # ---------------------------------------------------------------------------
   frontend:
-    <<: [*custom_image, *bench_volume, *network]
+    <<: [*custom_image, *bench_volume]
+    networks:
+      - bench-network
+      - default          # must be on Dokploy's default network so Traefik can reach it
     entrypoint: ["bash", "-c"]
     command:
       - >
