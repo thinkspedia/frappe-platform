@@ -70,7 +70,8 @@
 - [x] `make push-deploy-dokploy` — push pre-built image + redeploy
 - [x] `make build` / `make push` / `make build-push` — granular targets
 - [x] `make dokploy-status` — live status check
-- [x] First successful deploy: `nusakura-erp-stg:v1.0.0` → running
+- [x] Staging site live: `https://nusakura-stg.erp.thinkspedia.id` — SSL ✓, ERPNext accessible ✓
+- [x] `platform/docs/dokploy-deployment.md` — full deployment guide with all problems and solutions
 
 ## What Is Planned But Not Yet Implemented
 - [ ] `platform/nomad/frappe.nomad.hcl` — Nomad job spec
@@ -85,6 +86,13 @@
 16. **Harbor internal CA on Dokploy VPS** — Docker daemon cannot pull from `registry.corp.thinkspedia.id` until CA cert is installed: `sudo mkdir -p /etc/docker/certs.d/registry.corp.thinkspedia.id && sudo cp ca.crt /etc/docker/certs.d/registry.corp.thinkspedia.id/ca.crt`. No Docker restart needed.
 17. **Dokploy registry credentials** — must be added in Dokploy UI (Settings → Registries) separately from VPS cert trust.
 18. **Dokploy `compose.update` sets env vars** — `IMAGE_TAG` is updated in the Dokploy compose env before each redeploy. This is how image version is pinned per deploy.
+19. **Traefik labels + Dokploy UI domain = conflicting routers** — use one approach only. This repo uses Dokploy UI domain; Traefik labels are removed from the compose file.
+20. **`frontend` must be on `default` network** — Traefik (on `dokploy-network`/`default`) cannot route to containers not on that network. Add `default` to `frontend` service networks alongside `bench-network`.
+21. **Dokploy UI "Container Port" = internal container port** — nginx listens on 8080 inside the container. `HTTP_PUBLISH_PORT=8088` is the host-published port; entering 8088 as container port makes Traefik fail silently.
+22. **`SITE_NAME` must exactly match `FRAPPE_SITE_NAME_HEADER`** — nginx resolves the site by looking up `sites/${FRAPPE_SITE_NAME_HEADER}/site_config.json`. Any difference in the two values causes nginx 404 on all requests.
+23. **Reload Traefik after adding Dokploy UI domain** — new router is not picked up until Settings → Traefik → Reload is clicked.
+24. **`deploy.replicas: 0` is Swarm-only** — does not skip services in plain `docker compose up`. Use env-var gate inside the command (`[ "$CREATE_SITE" != "1" ] && exit 0`) instead.
+25. **Post-install: set `home_page` in DB** — freshly created Frappe sites have `System Settings.home_page = NULL`. Python omits the key from boot JSON entirely, so `frappe.boot.home_page` is JavaScript `undefined` → router navigates to `/undefined`. Fix: `frappe.db.set_value('System Settings', 'System Settings', 'home_page', 'workspace')` in bench console.
 
 ## Known Constraints and Gotchas
 
@@ -134,3 +142,12 @@
 | 2026-06-11 | Fixed: Dokploy API auth header (`x-api-key`), compose.all → project.all lookup |
 | 2026-06-11 | Fixed: Harbor CA cert on VPS + Dokploy registry credentials |
 | 2026-06-11 | First successful deploy: nusakura-erp-stg:v1.0.0 → running |
+| 2026-06-11 | Fixed: removed Traefik labels from compose (conflicted with Dokploy UI domain) |
+| 2026-06-11 | Fixed: frontend added to `default` network — Traefik couldn't route without it |
+| 2026-06-11 | Fixed: Swarm deploy.replicas replaced with in-command env-var gate (Nomad-ready) |
+| 2026-06-11 | Fixed: SITE_NAME aligned to FRAPPE_SITE_NAME_HEADER (was nusakura-erp.stg vs nusakura-stg.erp) |
+| 2026-06-11 | Fixed: Container Port in Dokploy domain = 8080 (internal), not 8088 (host) |
+| 2026-06-11 | Fixed: Traefik reload required after domain config saved |
+| 2026-06-11 | Fixed: home_page set in System Settings + Website Settings via bench console |
+| 2026-06-11 | Staging live: https://nusakura-stg.erp.thinkspedia.id — SSL ✓ |
+| 2026-06-11 | Created platform/docs/dokploy-deployment.md — full deployment guide |

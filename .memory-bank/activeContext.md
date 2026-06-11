@@ -3,7 +3,8 @@
 ## Current State (2026-06-11)
 
 The platform is fully working end-to-end for both local development and Dokploy production
-deployment. The first successful deployment to `nusakura-erp-stg` was completed today.
+deployment. The staging site `nusakura-stg.erp.thinkspedia.id` is live with SSL and fully
+accessible. Deployment guide documented at `platform/docs/dokploy-deployment.md`.
 
 ## What Was Just Completed
 
@@ -13,16 +14,23 @@ deployment. The first successful deployment to `nusakura-erp-stg` was completed 
 - `make build` / `make push` / `make build-push` — granular build/push control
 - `make dokploy-status` — check live Dokploy compose status
 
-**Fixes discovered during first deploy:**
+**Fixes discovered during first deploy (2026-06-11 session):**
 - Dokploy API uses `x-api-key` header, NOT `Authorization: Bearer`
 - `compose.all` endpoint does not exist — compose services are nested under `project.all` → `environments[].compose[]`
 - Harbor registry (`registry.corp.thinkspedia.id`) uses internal CA — VPS Docker daemon needs `/etc/docker/certs.d/<registry>/ca.crt` installed
 - Dokploy must have the registry credentials configured under Settings → Registries
+- Traefik labels in compose + Dokploy UI domain = conflicting routers → removed labels, use Dokploy UI domain only
+- `frontend` service must be on `default` network (not just `bench-network`) — Traefik can only route to containers on its own network
+- `deploy.replicas: 0` is Swarm-only — replaced with env-var gate (`CREATE_SITE != 1`) inside the command
+- `SITE_NAME` must exactly match `FRAPPE_SITE_NAME_HEADER` — nginx looks up `sites/${FRAPPE_SITE_NAME_HEADER}/` on disk
+- Dokploy UI domain "Container Port" = container's internal port (8080), NOT the host-published port (8088)
+- After adding domain in Dokploy UI, must manually reload Traefik (Settings → Traefik → Reload)
+- After first site creation, must set `home_page` in System Settings and Website Settings via bench console or `/undefined` navigation error occurs in the browser
 
 **Staging deployment confirmed working:**
-- Project: `nusakura-erp-stg` (projectId: `5lDuFK1Ht5u7DqGKwsy1u`)
-- Compose: `ERPNext App` (composeId: `gFL17GQy7kJI-RzFev-lo`)
-- Image: `registry.corp.thinkspedia.id/frappe/nusakura/nusakuraerp:v1.0.0`
+- Project: `nusakura-erp-stg` (composeId: `unDMPJe63QFy24yqw2RsY`)
+- Image: `registry.corp.thinkspedia.id/frappe/nusakura/nusakuraerp:v1.0.1`
+- URL: `https://nusakura-stg.erp.thinkspedia.id` — SSL via Let's Encrypt ✓
 - Status: `running` ✓
 
 ### Developer Workflow
@@ -70,9 +78,8 @@ deployment. The first successful deployment to `nusakura-erp-stg` was completed 
   Do not patch `frappe/` source.
 
 ## Next Recommended Actions
+- [ ] Resolve `GET /undefined` console error (desk:124 — likely a custom app hook registering a missing JS bundle)
 - [ ] `platform/nomad/frappe.nomad.hcl` — Nomad job spec (prestart migrate, zero-downtime)
 - [ ] GitHub Actions CI — automated image build + push to Harbor on tag push
 - [ ] Production environment (separate from staging) — `nusakura-erp-prod`
-- [ ] `make prod-new-site` — run once to bootstrap the staging site in Dokploy
 - [ ] `platform/cli/` — org-bench CLI (dev setup / build / deploy commands)
-- [ ] Document Dokploy VPS CA cert setup in `developer-workflow.md`
