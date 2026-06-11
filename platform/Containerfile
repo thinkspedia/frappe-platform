@@ -55,8 +55,18 @@ COPY --from=builder --chown=frappe:frappe /home/frappe/frappe-bench /home/frappe
 
 WORKDIR /home/frappe/frappe-bench
 
+# Re-install all apps as editable packages using this image's Python interpreter.
+# frappe/build and frappe/base may embed different Python patch versions; the venv
+# copied from the builder records the builder's interpreter path, so site-packages
+# entries (egg-links / direct_url.json) may not resolve correctly. Explicit reinstall
+# pins them to the base image's Python and guarantees `import hrms` etc. work at runtime.
+RUN for app_dir in apps/*/; do \
+      /home/frappe/frappe-bench/env/bin/pip install \
+        --quiet --no-deps -e "$app_dir"; \
+    done
+
 # Move compiled assets into the image layer so they survive volume mounts.
-# main-entrypoint.sh re-links sites/assets → this path on every container start.
+# main-entrypoint.sh copies sites/assets from this path on every container start.
 RUN cp -r /home/frappe/frappe-bench/sites/assets /home/frappe/frappe-bench/assets && \
   rm -rf /home/frappe/frappe-bench/sites/assets
 

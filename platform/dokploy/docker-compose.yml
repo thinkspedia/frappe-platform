@@ -7,41 +7,43 @@
 # This compose exposes the frontend nginx on HTTP_PUBLISH_PORT (default 8080).
 # Configure the domain in Dokploy UI → Project → Domain → point to port 8080.
 #
-# First-time site creation (run once after first deploy):
-#   make prod-new-site
+# One-time tasks (scale to 1 via env var, then back to 0):
+#   CREATE_SITE=1  → provision a new Frappe site
+#   MIGRATE=1      → run bench migrate with maintenance mode (for manual/forced runs)
+#
+# Configurator and migration run automatically on every deploy.
 # =============================================================================
 
-x-image: &image
+x-custom-image: &custom_image
   image: ${IMAGE_REGISTRY}/nusakuraerp:${IMAGE_TAG:-latest}
   pull_policy: ${PULL_POLICY:-always}
   restart: ${RESTART_POLICY:-unless-stopped}
 
-x-nginx-image: &nginx_image
-  image: frappe/erpnext:${FRAPPE_BRANCH:-version-16}
-  pull_policy: ${PULL_POLICY:-always}
-  restart: ${RESTART_POLICY:-unless-stopped}
+x-bench-volume: &bench_volume
+  volumes:
+    - sites:/home/frappe/frappe-bench/sites
+
+x-network: &network
+  networks:
+    - bench-network
 
 x-depends-configurator: &depends_configurator
   depends_on:
     configurator:
       condition: service_completed_successfully
 
-x-bench-volume: &bench_volume
-  volumes:
-    - sites:/home/frappe/frappe-bench/sites
-
 services:
 
   # ---------------------------------------------------------------------------
-  # configurator — one-shot: writes common_site_config.json on every `up`
+  # configurator — runs on every deploy: writes common_site_config.json
   # ---------------------------------------------------------------------------
   configurator:
-    <<: [*image, *bench_volume]
-    platform: linux/amd64
-    entrypoint: [bash, -c]
+    <<: [*custom_image, *bench_volume, *network]
+    restart: "no"
+    entrypoint: ["bash", "-c"]
     command:
       - >
-        ls -1 apps > sites/apps.txt;
+        [[ ${REGENERATE_APPS_TXT:-1} == "1" ]] && ls -1 apps > sites/apps.txt;
         bench set-config -g db_host $$DB_HOST;
         bench set-config -gp db_port $$DB_PORT;
         bench set-config -g redis_cache "redis://$$REDIS_CACHE";
@@ -61,44 +63,83 @@ services:
       REDIS_QUEUE: ${REDIS_QUEUE:-redis-queue:6379}
       SITE_NAME: ${FRAPPE_SITE_NAME_HEADER:-}
       SITE_HOST_NAME: ${SITE_HOST_NAME:-https://${FRAPPE_SITE_NAME_HEADER:-}}
+      REGENERATE_APPS_TXT: ${REGENERATE_APPS_TXT:-1}
     depends_on:
       db:
         condition: service_healthy
       redis-cache:
-        condition: service_started
+        condition: service_healthy
       redis-queue:
-        condition: service_started
-    restart: on-failure
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
-  # migrator — one-shot: runs bench migrate on every deploy
+  # migration — runs on every deploy: bench migrate (with maintenance mode)
   # ---------------------------------------------------------------------------
-  migrator:
-    <<: [*image, *depends_configurator, *bench_volume]
-    platform: linux/amd64
-    entrypoint: [bash, -c]
+  migration:
+    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
+    restart: "no"
+    entrypoint: ["bash", "-c"]
     command:
       - >
-        if [ "$$MIGRATE_SITES" != "true" ]; then
-          echo "[migrator] Migration disabled — skipping";
-          exit 0;
-        fi;
         if [ -z "$$(find sites -mindepth 2 -maxdepth 2 -name site_config.json 2>/dev/null)" ]; then
-          echo "[migrator] No sites found — skipping";
+          echo "[migration] No sites found — skipping";
           exit 0;
         fi;
-        echo "[migrator] Running bench migrate --skip-failing...";
+        echo "[migration] Enabling maintenance mode...";
+        bench --site all set-config -p maintenance_mode 1;
+        bench --site all set-config -p pause_scheduler 1;
+        echo "[migration] Running bench migrate...";
         bench --site all migrate;
+        echo "[migration] Disabling maintenance mode...";
+        bench --site all set-config -p maintenance_mode 0;
+        bench --site all set-config -p pause_scheduler 0;
+
+  # ---------------------------------------------------------------------------
+  # create-site — opt-in: scale CREATE_SITE=1 to provision a new site
+  # ---------------------------------------------------------------------------
+  create-site:
+    <<: [*custom_image, *bench_volume, *network]
+    deploy:
+      mode: replicated
+      replicas: ${CREATE_SITE:-0}
+      restart_policy:
+        condition: none
+    restart: "no"
+    entrypoint: ["bash", "-c"]
+    command:
+      - >
+        wait-for-it -t 120 db:3306;
+        wait-for-it -t 120 redis-cache:6379;
+        wait-for-it -t 120 redis-queue:6379;
+        export start=`date +%s`;
+        until [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".db_host // empty"` ]] && \
+          [[ -n `grep -hs ^ sites/common_site_config.json | jq -r ".redis_cache // empty"` ]]; do
+          echo "Waiting for common_site_config.json...";
+          sleep 5;
+          if (( `date +%s`-start > 120 )); then
+            echo "Timed out waiting for common_site_config.json";
+            exit 1;
+          fi;
+        done;
+        [[ -d "sites/$${SITE_NAME}" ]] && echo "$${SITE_NAME} already exists" && exit 0;
+        bench new-site \
+          --mariadb-user-host-login-scope='%' \
+          --admin-password=$${ADMIN_PASSWORD} \
+          --db-root-username=root \
+          --db-root-password=$${DB_ROOT_PASSWORD} \
+          $${INSTALL_APP_ARGS} \
+          $${SITE_NAME};
     environment:
-      MIGRATE_SITES: ${MIGRATE_SITES:-true}
-    restart: on-failure:5
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme}
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-change_me}
+      INSTALL_APP_ARGS: ${INSTALL_APP_ARGS:---install-app erpnext}
+      SITE_NAME: ${FRAPPE_SITE_NAME_HEADER:-site1.localhost}
 
   # ---------------------------------------------------------------------------
   # backend — Gunicorn workers (Frappe WSGI)
   # ---------------------------------------------------------------------------
   backend:
-    <<: [*image, *depends_configurator, *bench_volume]
-    platform: linux/amd64
+    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
     environment:
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
       GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
@@ -106,19 +147,22 @@ services:
     depends_on:
       configurator:
         condition: service_completed_successfully
+      migration:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/method/ping"]
+      test: ["CMD", "wait-for-it", "0.0.0.0:8000"]
       interval: 10s
-      timeout: 5s
-      retries: 10
+      timeout: 10s
+      retries: 30
       start_period: 30s
 
   # ---------------------------------------------------------------------------
-  # frontend — nginx: serves assets, proxies /socket.io → websocket, rest → backend
+  # frontend — nginx: serves assets, proxies /socket.io → websocket
   # ---------------------------------------------------------------------------
   frontend:
-    <<: *nginx_image
-    platform: linux/amd64
+    image: frappe/erpnext:${FRAPPE_BRANCH:-version-16}
+    pull_policy: ${PULL_POLICY:-always}
+    restart: ${RESTART_POLICY:-unless-stopped}
     command: [nginx-entrypoint.sh]
     environment:
       BACKEND: backend:8000
@@ -138,35 +182,67 @@ services:
         condition: service_healthy
       websocket:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wait-for-it", "0.0.0.0:8080"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    networks:
+      - bench-network
 
   # ---------------------------------------------------------------------------
   # websocket — Socket.IO node server
   # ---------------------------------------------------------------------------
   websocket:
-    <<: [*image, *depends_configurator, *bench_volume]
-    platform: linux/amd64
+    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
     command: [node, /home/frappe/frappe-bench/apps/frappe/socketio.js]
+    healthcheck:
+      test: ["CMD", "wait-for-it", "0.0.0.0:9000"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
 
   # ---------------------------------------------------------------------------
-  # queues — background job workers
+  # queues — background job workers (three tiers)
   # ---------------------------------------------------------------------------
+  queue-default:
+    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
+    command: [bench, worker, --queue, default]
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
   queue-short:
-    <<: [*image, *depends_configurator, *bench_volume]
-    platform: linux/amd64
-    command: bench worker --queue short,default
+    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
+    command: [bench, worker, --queue, short]
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
 
   queue-long:
-    <<: [*image, *depends_configurator, *bench_volume]
-    platform: linux/amd64
-    command: bench worker --queue long,default,short
+    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
+    command: [bench, worker, --queue, long]
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
 
   # ---------------------------------------------------------------------------
   # scheduler — periodic task runner
   # ---------------------------------------------------------------------------
   scheduler:
-    <<: [*image, *depends_configurator, *bench_volume]
-    platform: linux/amd64
-    command: bench schedule
+    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
+    command: [bench, schedule]
+    healthcheck:
+      test: ["CMD", "wait-for-it", "redis-queue:6379"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
 
   # ---------------------------------------------------------------------------
   # db — MariaDB
@@ -176,35 +252,60 @@ services:
     platform: linux/amd64
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "--password=${DB_ROOT_PASSWORD:-change_me}"]
+      test: ["CMD", "mysql", "-u", "root", "-p${DB_ROOT_PASSWORD:-change_me}", "-e", "SELECT 1"]
       start_period: 10s
-      interval: 5s
+      interval: 15s
       timeout: 5s
       retries: 10
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --skip-character-set-client-handshake
+      - --wait-timeout=28800
+      - --interactive-timeout=28800
+      - --max-allowed-packet=67108864
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-change_me}
       MARIADB_AUTO_UPGRADE: "1"
     volumes:
       - db-data:/var/lib/mysql
+    networks:
+      - bench-network
 
   # ---------------------------------------------------------------------------
-  # redis — cache and queue (two separate instances)
+  # redis — cache and queue (two instances; socketio shares queue)
   # ---------------------------------------------------------------------------
   redis-cache:
     image: redis:7-alpine
     restart: unless-stopped
+    volumes:
+      - redis-cache-data:/data
+    networks:
+      - bench-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
 
   redis-queue:
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
       - redis-queue-data:/data
+    networks:
+      - bench-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
 
 volumes:
   sites:
   db-data:
+  redis-cache-data:
   redis-queue-data:
+
+networks:
+  bench-network:
