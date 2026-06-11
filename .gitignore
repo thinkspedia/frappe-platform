@@ -4,6 +4,10 @@ platform/.env
 platform/.env.stg
 platform/.env.prod
 
+platform/dokploy/.env
+platform/dokploy/.env.stg
+platform/dokploy/.env.prod
+
 # Bench directory — created by bootstrap on first `make dev-start`
 development/frappe-bench/
 
