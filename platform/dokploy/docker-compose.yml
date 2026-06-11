@@ -8,9 +8,9 @@
 # Configure the domain in Dokploy UI → Project → Domain → point to that port.
 #
 # One-time tasks (set env var to 1, redeploy, then reset to 0):
-#   CONFIGURE=1    → (re)write common_site_config.json
 #   CREATE_SITE=1  → provision a new Frappe site
 #   MIGRATE=1      → run bench migrate with maintenance mode
+# Configurator runs automatically on every deploy (always-on, fast, idempotent).
 # =============================================================================
 
 x-custom-image: &custom_image
@@ -37,16 +37,12 @@ x-depends-configurator: &depends_configurator
 services:
 
   # ---------------------------------------------------------------------------
-  # configurator — opt-in: set CONFIGURE=1 to (re)write common_site_config.json
-  # Must be run at least once before first deploy, and whenever config changes.
+  # configurator — runs on every deploy: writes common_site_config.json
+  # Fast (~5s), idempotent, safe to run on every deploy.
   # ---------------------------------------------------------------------------
   configurator:
     <<: [*custom_image, *bench_volume, *network]
-    deploy:
-      mode: replicated
-      replicas: ${CONFIGURE:-0}
-      restart_policy:
-        condition: none
+    restart: "no"
     entrypoint: ["bash", "-c"]
     command:
       - >
@@ -71,6 +67,13 @@ services:
       SITE_NAME: ${SITE_NAME:-}
       SITE_HOST_NAME: ${SITE_HOST_NAME:-}
       REGENERATE_APPS_TXT: ${REGENERATE_APPS_TXT:-1}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
 
   # ---------------------------------------------------------------------------
   # create-site — opt-in: set CREATE_SITE=1 to provision a new site (once only)
