@@ -186,6 +186,16 @@ services:
   # ---------------------------------------------------------------------------
   frontend:
     <<: [*custom_image, *bench_volume, *network]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}-http.rule=Host(`${FRAPPE_SITE_NAME_HEADER}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}-http.entrypoints=web"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}-http.middlewares=redirect-to-https@file"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}.rule=Host(`${FRAPPE_SITE_NAME_HEADER}`)"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}.entrypoints=websecure"
+      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${TRAEFIK_ROUTER_NAME:-frappe-app}.loadbalancer.server.port=8080"
     entrypoint: ["bash", "-c"]
     command:
       - >
