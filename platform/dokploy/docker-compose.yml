@@ -16,9 +16,7 @@
 x-custom-image: &custom_image
   image: ${IMAGE_REGISTRY}/nusakuraerp:${IMAGE_TAG:-latest}
   pull_policy: ${PULL_POLICY:-always}
-  deploy:
-    restart_policy:
-      condition: always
+  restart: unless-stopped
 
 x-bench-volume: &bench_volume
   volumes:
@@ -38,27 +36,47 @@ services:
 
   # ---------------------------------------------------------------------------
   # configurator — runs on every deploy: writes common_site_config.json
-  # Fast (~5s), idempotent, safe to run on every deploy.
+  # Uses direct Python JSON to avoid bench/frappe import overhead and DB hangs.
   # ---------------------------------------------------------------------------
   configurator:
     <<: [*custom_image, *bench_volume, *network]
     restart: "no"
     entrypoint: ["bash", "-c"]
     command:
-      - >
-        [[ ${REGENERATE_APPS_TXT:-1} == "1" ]] && ls -1 apps > sites/apps.txt;
-        bench set-config -g db_host $$DB_HOST;
-        bench set-config -gp db_port $$DB_PORT;
-        bench set-config -g redis_cache "redis://$$REDIS_CACHE";
-        bench set-config -g redis_queue "redis://$$REDIS_QUEUE";
-        bench set-config -g redis_socketio "redis://$$REDIS_QUEUE";
-        bench set-config -gp socketio_port 9000;
-        bench set-config -gp webserver_port 80;
-        bench set-config -g server_script_enabled 1;
-        bench set-config -g chromium_path /usr/bin/chromium-headless-shell;
-        if [ -n "$$SITE_NAME" ] && [ -f "sites/$$SITE_NAME/site_config.json" ]; then
-          bench --site $$SITE_NAME set-config host_name "$$SITE_HOST_NAME";
-        fi;
+      - |
+        set -e
+        ls -1 apps > sites/apps.txt
+        python3 -c "
+        import json, os, sys
+        p = 'sites/common_site_config.json'
+        try:
+            c = json.load(open(p))
+        except Exception:
+            c = {}
+        c.update({
+            'db_host': os.environ.get('DB_HOST', 'db'),
+            'db_port': int(os.environ.get('DB_PORT', 3306)),
+            'redis_cache': 'redis://' + os.environ.get('REDIS_CACHE', 'redis-cache:6379'),
+            'redis_queue': 'redis://' + os.environ.get('REDIS_QUEUE', 'redis-queue:6379'),
+            'redis_socketio': 'redis://' + os.environ.get('REDIS_QUEUE', 'redis-queue:6379'),
+            'socketio_port': 9000,
+            'webserver_port': 80,
+            'server_script_enabled': 1,
+            'chromium_path': '/usr/bin/chromium-headless-shell',
+        })
+        open(p, 'w').write(json.dumps(c, indent=2))
+        print('[configurator] common_site_config.json written')
+        sn = os.environ.get('SITE_NAME', '')
+        sh = os.environ.get('SITE_HOST_NAME', '')
+        if sn and sh:
+            sp = 'sites/' + sn + '/site_config.json'
+            if os.path.exists(sp):
+                sc = json.load(open(sp))
+                sc['host_name'] = sh
+                open(sp, 'w').write(json.dumps(sc, indent=2))
+                print('[configurator] host_name updated in ' + sp)
+        print('[configurator] Done')
+        "
     environment:
       DB_HOST: ${DB_HOST:-db}
       DB_PORT: ${DB_PORT:-3306}
@@ -66,7 +84,6 @@ services:
       REDIS_QUEUE: ${REDIS_QUEUE:-redis-queue:6379}
       SITE_NAME: ${SITE_NAME:-}
       SITE_HOST_NAME: ${SITE_HOST_NAME:-}
-      REGENERATE_APPS_TXT: ${REGENERATE_APPS_TXT:-1}
     depends_on:
       db:
         condition: service_healthy
@@ -80,6 +97,7 @@ services:
   # ---------------------------------------------------------------------------
   create-site:
     <<: [*custom_image, *bench_volume, *network]
+    restart: "no"
     deploy:
       mode: replicated
       replicas: ${CREATE_SITE:-0}
@@ -123,6 +141,7 @@ services:
   # ---------------------------------------------------------------------------
   migration:
     <<: [*custom_image, *bench_volume, *network]
+    restart: "no"
     deploy:
       mode: replicated
       replicas: ${MIGRATE:-0}
@@ -253,9 +272,7 @@ services:
   # ---------------------------------------------------------------------------
   db:
     image: mariadb:10.6
-    deploy:
-      restart_policy:
-        condition: always
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "mysql", "-u", "root", "-p${DB_ROOT_PASSWORD}", "-e", "SELECT 1"]
       interval: 15s
@@ -283,9 +300,7 @@ services:
   # ---------------------------------------------------------------------------
   redis-cache:
     image: redis:6.2-alpine
-    deploy:
-      restart_policy:
-        condition: always
+    restart: unless-stopped
     volumes:
       - redis-cache-data:/data
     networks:
@@ -298,9 +313,7 @@ services:
 
   redis-queue:
     image: redis:6.2-alpine
-    deploy:
-      restart_policy:
-        condition: always
+    restart: unless-stopped
     volumes:
       - redis-queue-data:/data
     networks:
