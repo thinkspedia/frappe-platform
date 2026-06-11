@@ -20,7 +20,7 @@ TAG="${4:-}"
 STATUS_ONLY="${5:-}"
 
 API="${SERVER%/}/api"
-AUTH=(-H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json")
+AUTH=(-H "x-api-key: $TOKEN" -H "Content-Type: application/json")
 
 # ---------------------------------------------------------------------------
 # Helper: call Dokploy API
@@ -40,14 +40,16 @@ api_post() {
 # ---------------------------------------------------------------------------
 echo "[dokploy] Looking up project '${PROJECT_NAME}'..."
 
-PROJECTS=$(api_get "compose.all" 2>/dev/null || echo "[]")
+PROJECTS=$(api_get "project.all" 2>/dev/null || echo "[]")
 COMPOSE_ID=$(echo "$PROJECTS" | python3 -c "
 import json, sys
 projects = json.load(sys.stdin)
-for p in projects:
-    if p.get('name') == '${PROJECT_NAME}':
-        print(p['composeId'])
-        sys.exit(0)
+for proj in projects:
+    if proj.get('name') == '${PROJECT_NAME}':
+        for env in proj.get('environments', []):
+            for c in env.get('compose', []):
+                print(c['composeId'])
+                sys.exit(0)
 print('')
 " 2>/dev/null || echo "")
 
@@ -56,7 +58,12 @@ if [ -z "$COMPOSE_ID" ]; then
   echo "[dokploy] Available projects:"
   echo "$PROJECTS" | python3 -c "
 import json, sys
-for p in json.load(sys.stdin): print(f\"  - {p.get('name', '?')} ({p.get('composeId','?')})\")
+projects = json.load(sys.stdin)
+for proj in projects:
+    print(f\"  - {proj.get('name','?')} ({proj.get('projectId','?')})\")
+    for env in proj.get('environments', []):
+        for c in env.get('compose', []):
+            print(f\"      compose: {c.get('name','?')} ({c.get('composeId','?')})\")
 " 2>/dev/null || true
   exit 1
 fi

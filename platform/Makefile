@@ -210,11 +210,45 @@ apps = json.load(open('$(PLATFORM_DIR)/apps.json')); \
 print(json.dumps(apps, indent=2))" > $(_APPS_TMP)
 
 .PHONY: build
-build: check-env _apps-json ## Build + push production image — usage: make build tag=v1.0.0
+build: check-env _apps-json ## Build image locally (no push) — usage: make build tag=v1.0.0
 ifndef tag
 	$(error Usage: make build tag=<version>)
 endif
 	@echo "Building $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag) ..."
+	docker buildx build \
+		--platform linux/amd64 \
+		--build-arg FRAPPE_BRANCH=$(FRAPPE_BRANCH) \
+		--build-arg FRAPPE_IMAGE_PREFIX=$(FRAPPE_IMAGE_PREFIX) \
+		--build-arg CACHE_BUST=$(shell date +%s) \
+		--secret id=apps_json,src=$(_APPS_TMP) \
+		--tag $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag) \
+		--tag $(IMAGE_REGISTRY)/$(IMAGE_NAME):latest \
+		--load \
+		--file $(PLATFORM_DIR)/Containerfile \
+		$(PLATFORM_DIR)/..
+	@rm -f $(_APPS_TMP)
+	@echo ""
+	@echo "  Image built locally: $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag)"
+	@echo "  Run 'make push tag=$(tag)' to push to registry."
+	@echo ""
+
+.PHONY: push
+push: ## Push already-built image to registry — usage: make push tag=v1.0.0
+ifndef tag
+	$(error Usage: make push tag=<version>)
+endif
+	docker push $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag)
+	docker push $(IMAGE_REGISTRY)/$(IMAGE_NAME):latest
+	@echo ""
+	@echo "  Image pushed: $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag)"
+	@echo ""
+
+.PHONY: build-push
+build-push: check-env _apps-json ## Build and push in one step — usage: make build-push tag=v1.0.0
+ifndef tag
+	$(error Usage: make build-push tag=<version>)
+endif
+	@echo "Building and pushing $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(tag) ..."
 	docker buildx build \
 		--platform linux/amd64 \
 		--build-arg FRAPPE_BRANCH=$(FRAPPE_BRANCH) \
@@ -250,7 +284,7 @@ ifndef DOKPLOY_SERVER
 	$(error DOKPLOY_SERVER is not set in .env)
 endif
 	@echo "Building and pushing image..."
-	$(MAKE) build tag=$(tag)
+	$(MAKE) build-push tag=$(tag)
 	@echo "Triggering Dokploy redeploy for project '$(DOKPLOY_PROJECT_NAME)'..."
 	@$(PLATFORM_DIR)/scripts/dokploy-deploy.sh \
 		"$(DOKPLOY_SERVER)" \
