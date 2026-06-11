@@ -25,6 +25,13 @@ SHELL := /bin/bash
 -include .env
 export
 
+# Load per-environment overrides when env= is passed (e.g. make deploy-dokploy tag=v1.0.0 env=stg)
+# .env.stg / .env.prod override only the vars they define — base .env is still loaded first.
+ifdef env
+  -include .env.$(env)
+  export
+endif
+
 # COMPOSE_PROFILES enables optional service groups.
 # Set COMPOSE_PROFILES= (empty) in .env to disable all optional tools.
 COMPOSE_PROFILES ?= tools
@@ -269,23 +276,26 @@ endif
 # Deploy — Dokploy
 # ---------------------------------------------------------------------------
 
-# Retrieves the Compose project ID from Dokploy by project name.
-DOKPLOY_PROJECT_NAME ?= nusakura-erp
+# Default — overridden by .env.stg / .env.prod via env= parameter
+DOKPLOY_PROJECT_NAME ?= nusakura-erp-stg
+
+# Shared guard used by all dokploy targets
+define check-dokploy-env
+	$(if $(env),,$(error Usage: make $@ tag=<version> env=<stg|prod>))
+	$(if $(wildcard $(PLATFORM_DIR)/.env.$(env)),,$(error .env.$(env) not found — copy .env.$(env).example and fill in secrets))
+	$(if $(DOKPLOY_TOKEN),,$(error DOKPLOY_TOKEN is not set in .env.$(env)))
+	$(if $(DOKPLOY_SERVER),,$(error DOKPLOY_SERVER is not set in .env.$(env)))
+endef
 
 .PHONY: deploy-dokploy
-deploy-dokploy: check-env ## Build + push image then redeploy on Dokploy — usage: make deploy-dokploy tag=v1.0.0
+deploy-dokploy: check-env ## Build + push + redeploy — usage: make deploy-dokploy tag=v1.0.0 env=stg
 ifndef tag
-	$(error Usage: make deploy-dokploy tag=<version>)
+	$(error Usage: make deploy-dokploy tag=<version> env=<stg|prod>)
 endif
-ifndef DOKPLOY_TOKEN
-	$(error DOKPLOY_TOKEN is not set in .env)
-endif
-ifndef DOKPLOY_SERVER
-	$(error DOKPLOY_SERVER is not set in .env)
-endif
-	@echo "Building and pushing image..."
-	$(MAKE) build-push tag=$(tag)
-	@echo "Triggering Dokploy redeploy for project '$(DOKPLOY_PROJECT_NAME)'..."
+	$(call check-dokploy-env)
+	@echo "[$(env)] Building and pushing image..."
+	$(MAKE) build-push tag=$(tag) env=$(env)
+	@echo "[$(env)] Triggering Dokploy redeploy for project '$(DOKPLOY_PROJECT_NAME)'..."
 	@$(PLATFORM_DIR)/scripts/dokploy-deploy.sh \
 		"$(DOKPLOY_SERVER)" \
 		"$(DOKPLOY_TOKEN)" \
@@ -293,19 +303,14 @@ endif
 		"$(tag)"
 
 .PHONY: push-deploy-dokploy
-push-deploy-dokploy: check-env ## Push already-built image then redeploy on Dokploy — usage: make push-deploy-dokploy tag=v1.0.0
+push-deploy-dokploy: check-env ## Push pre-built image + redeploy — usage: make push-deploy-dokploy tag=v1.0.0 env=stg
 ifndef tag
-	$(error Usage: make push-deploy-dokploy tag=<version>)
+	$(error Usage: make push-deploy-dokploy tag=<version> env=<stg|prod>)
 endif
-ifndef DOKPLOY_TOKEN
-	$(error DOKPLOY_TOKEN is not set in .env)
-endif
-ifndef DOKPLOY_SERVER
-	$(error DOKPLOY_SERVER is not set in .env)
-endif
-	@echo "Pushing image..."
-	$(MAKE) push tag=$(tag)
-	@echo "Triggering Dokploy redeploy for project '$(DOKPLOY_PROJECT_NAME)'..."
+	$(call check-dokploy-env)
+	@echo "[$(env)] Pushing image..."
+	$(MAKE) push tag=$(tag) env=$(env)
+	@echo "[$(env)] Triggering Dokploy redeploy for project '$(DOKPLOY_PROJECT_NAME)'..."
 	@$(PLATFORM_DIR)/scripts/dokploy-deploy.sh \
 		"$(DOKPLOY_SERVER)" \
 		"$(DOKPLOY_TOKEN)" \
@@ -313,10 +318,8 @@ endif
 		"$(tag)"
 
 .PHONY: dokploy-status
-dokploy-status: check-env ## Show current Dokploy deployment status
-ifndef DOKPLOY_TOKEN
-	$(error DOKPLOY_TOKEN is not set in .env)
-endif
+dokploy-status: check-env ## Show Dokploy deployment status — usage: make dokploy-status env=stg
+	$(call check-dokploy-env)
 	@$(PLATFORM_DIR)/scripts/dokploy-deploy.sh \
 		"$(DOKPLOY_SERVER)" \
 		"$(DOKPLOY_TOKEN)" \
@@ -325,20 +328,22 @@ endif
 		--status
 
 .PHONY: prod-new-site
-prod-new-site: check-env ## Create site on Dokploy — run once after first deploy
-ifndef DOKPLOY_TOKEN
-	$(error DOKPLOY_TOKEN is not set in .env)
+prod-new-site: check-env ## Print bench new-site command for Dokploy VPS — usage: make prod-new-site env=stg
+	$(call check-dokploy-env)
+ifndef PROD_SITE_NAME
+	$(error PROD_SITE_NAME is not set in .env.$(env))
 endif
 	@echo ""
-	@echo "  Run this command on the Dokploy server to create the site:"
+	@echo "  [$(env)] Run this command on the Dokploy server to create the site:"
 	@echo ""
 	@echo "  docker exec -it \$$(docker ps --filter name=backend --format '{{.Names}}' | head -1) \\"
-	@echo "    bench new-site $(FRAPPE_SITE_NAME) \\"
+	@echo "    bench new-site $(PROD_SITE_NAME) \\"
 	@echo "    --mariadb-user-host-login-scope='%' \\"
 	@echo "    --db-root-password '$(DB_ROOT_PASSWORD)' \\"
 	@echo "    --admin-password '$(SITE_ADMIN_PASSWORD)' \\"
 	@echo "    --install-app erpnext \\"
 	@echo "    --install-app hrms \\"
 	@echo "    --install-app nusakura_app \\"
-	@echo "    --install-app nusakura_waha_app"
+	@echo "    --install-app nusakura_waha_app \\"
+	@echo "    --install-app offsite_backups"
 	@echo ""
