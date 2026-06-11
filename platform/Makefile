@@ -292,6 +292,26 @@ endif
 		"$(DOKPLOY_PROJECT_NAME)" \
 		"$(tag)"
 
+.PHONY: push-deploy-dokploy
+push-deploy-dokploy: check-env ## Push already-built image then redeploy on Dokploy — usage: make push-deploy-dokploy tag=v1.0.0
+ifndef tag
+	$(error Usage: make push-deploy-dokploy tag=<version>)
+endif
+ifndef DOKPLOY_TOKEN
+	$(error DOKPLOY_TOKEN is not set in .env)
+endif
+ifndef DOKPLOY_SERVER
+	$(error DOKPLOY_SERVER is not set in .env)
+endif
+	@echo "Pushing image..."
+	$(MAKE) push tag=$(tag)
+	@echo "Triggering Dokploy redeploy for project '$(DOKPLOY_PROJECT_NAME)'..."
+	@$(PLATFORM_DIR)/scripts/dokploy-deploy.sh \
+		"$(DOKPLOY_SERVER)" \
+		"$(DOKPLOY_TOKEN)" \
+		"$(DOKPLOY_PROJECT_NAME)" \
+		"$(tag)"
+
 .PHONY: dokploy-status
 dokploy-status: check-env ## Show current Dokploy deployment status
 ifndef DOKPLOY_TOKEN
