@@ -94,18 +94,16 @@ services:
 
   # ---------------------------------------------------------------------------
   # create-site — opt-in: set CREATE_SITE=1 to provision a new site (once only)
+  # Conditional logic is handled inside the command (not via deploy.replicas)
+  # so this works with plain docker compose, Dokploy, and future Nomad deployments.
   # ---------------------------------------------------------------------------
   create-site:
     <<: [*custom_image, *bench_volume, *network]
     restart: "no"
-    deploy:
-      mode: replicated
-      replicas: ${CREATE_SITE:-0}
-      restart_policy:
-        condition: none
     entrypoint: ["bash", "-c"]
     command:
       - >
+        [ "$${CREATE_SITE}" != "1" ] && echo "[create-site] Skipped (CREATE_SITE != 1)" && exit 0;
         wait-for-it -t 120 db:3306;
         wait-for-it -t 120 redis-cache:6379;
         wait-for-it -t 120 redis-queue:6379;
@@ -131,6 +129,7 @@ services:
           $${INSTALL_APP_ARGS} \
           $${SITE_NAME};
     environment:
+      CREATE_SITE: ${CREATE_SITE:-0}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       INSTALL_APP_ARGS: ${INSTALL_APP_ARGS:---install-app erpnext}
@@ -138,18 +137,16 @@ services:
 
   # ---------------------------------------------------------------------------
   # migration — opt-in: set MIGRATE=1 to run bench migrate with maintenance mode
+  # Conditional logic is handled inside the command (not via deploy.replicas)
+  # so this works with plain docker compose, Dokploy, and future Nomad deployments.
   # ---------------------------------------------------------------------------
   migration:
     <<: [*custom_image, *bench_volume, *network]
     restart: "no"
-    deploy:
-      mode: replicated
-      replicas: ${MIGRATE:-0}
-      restart_policy:
-        condition: none
     entrypoint: ["bash", "-c"]
     command:
       - >
+        [ "$${MIGRATE}" != "1" ] && echo "[migration] Skipped (MIGRATE != 1)" && exit 0;
         if [ -z "$$(find sites -mindepth 2 -maxdepth 2 -name site_config.json 2>/dev/null)" ]; then
           echo "[migration] No sites found — skipping";
           exit 0;
@@ -162,6 +159,8 @@ services:
         echo "[migration] Disabling maintenance mode...";
         bench --site all set-config -p maintenance_mode 0;
         bench --site all set-config -p pause_scheduler 0;
+    environment:
+      MIGRATE: ${MIGRATE:-0}
 
   # ---------------------------------------------------------------------------
   # backend — Gunicorn workers (Frappe WSGI)
@@ -186,16 +185,6 @@ services:
   # ---------------------------------------------------------------------------
   frontend:
     <<: [*custom_image, *bench_volume, *network]
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=dokploy-network"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}-http.rule=Host(`${FRAPPE_SITE_NAME_HEADER}`)"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}-http.entrypoints=web"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}-http.middlewares=redirect-to-https@file"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}.rule=Host(`${FRAPPE_SITE_NAME_HEADER}`)"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}.entrypoints=websecure"
-      - "traefik.http.routers.${TRAEFIK_ROUTER_NAME:-frappe-app}.tls.certresolver=letsencrypt"
-      - "traefik.http.services.${TRAEFIK_ROUTER_NAME:-frappe-app}.loadbalancer.server.port=8080"
     entrypoint: ["bash", "-c"]
     command:
       - >
