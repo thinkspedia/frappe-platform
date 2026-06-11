@@ -106,8 +106,6 @@ services:
     depends_on:
       configurator:
         condition: service_completed_successfully
-      migrator:
-        condition: service_completed_successfully
 
   # ---------------------------------------------------------------------------
   # frontend — nginx: serves assets, proxies /socket.io → websocket, rest → backend
