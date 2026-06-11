@@ -167,7 +167,10 @@ services:
   # backend — Gunicorn workers (Frappe WSGI)
   # ---------------------------------------------------------------------------
   backend:
-    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
+    <<: [*custom_image, *bench_volume, *depends_configurator]
+    networks:
+      - bench-network
+      - default          # shared with frontend (Dokploy forces port-exposed services onto default)
     environment:
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
       GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
@@ -182,10 +185,7 @@ services:
   # frontend — nginx: serves assets, proxies /socket.io → websocket
   # ---------------------------------------------------------------------------
   frontend:
-    <<: [*custom_image, *bench_volume]
-    networks:
-      - bench-network    # must be explicit — Dokploy replaces network config for port-exposed services
-      - dokploy-network  # Dokploy's reverse-proxy network
+    <<: [*custom_image, *bench_volume, *network]
     entrypoint: ["bash", "-c"]
     command:
       - >
@@ -220,7 +220,10 @@ services:
   # websocket — Socket.IO node server
   # ---------------------------------------------------------------------------
   websocket:
-    <<: [*custom_image, *bench_volume, *network, *depends_configurator]
+    <<: [*custom_image, *bench_volume, *depends_configurator]
+    networks:
+      - bench-network
+      - default          # shared with frontend (Dokploy forces port-exposed services onto default)
     command: [node, /home/frappe/frappe-bench/apps/frappe/socketio.js]
     healthcheck:
       test: ["CMD", "wait-for-it", "0.0.0.0:9000"]
@@ -335,6 +338,4 @@ volumes:
 
 networks:
   bench-network:
-  dokploy-network:
-    external: true
-    name: dokploy-network
+  default:              # project default network; Dokploy places port-exposed services here
