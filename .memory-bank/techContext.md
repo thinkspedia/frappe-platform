@@ -110,6 +110,70 @@ remote-wsl, remote-containers, prettier, vue.volar, sqltools, sqltools-driver-my
 
 No manual VSCode interpreter selection needed — `settings.json` handles it.
 
+## Nomad Infrastructure (Production Cluster)
+
+### Cluster Access
+| Target | Address |
+|---|---|
+| Nomad UI | https://100.85.99.16:4646 or http://nomad.corp.thinkspedia.id/ |
+| Nomad API | https://100.85.99.16:4646/v1 (header: `X-Nomad-Token`) |
+| Operator token | `47a19c79-4f0e-bec9-7a17-c8bb5ceadeeb` |
+| SSH key | `~/.ssh/id_ansible` (user: `opsadmin` on all nodes) |
+
+### Nomad Servers
+| Node | Netbird IP | Status |
+|---|---|---|
+| nomad-core-01 | 100.85.99.16 | alive |
+| nomad-core-02 | 100.85.196.70 | alive |
+| nomad-core-03 | 100.85.13.200 | alive (Raft data wiped + rejoined 2026-06-12) |
+
+### Nomad Clients
+| Node | Netbird IP | Notes |
+|---|---|---|
+| nomad-client-core-01 | 100.85.17.19 | Redis + old ERPNext running here |
+| nomad-client-core-02 | 100.85.129.187 | — |
+| nomad-client-core-03 | 100.85.14.86 | MariaDB running here |
+
+### Consul
+- Servers: 100.85.242.94 (consul-core-01), 100.85.148.198, 100.85.215.250
+- Client agents on all Nomad clients: HTTPS only on port 8501 (no HTTP 8500)
+- TLS certs on clients: `/etc/nomad.d/tls/consul-{ca,cli,cli-key}.pem`
+- Consul token (from Nomad client config): `ed4c0149-4de8-35a0-36ba-910420d4f99c`
+- Known issue: TLS cert IP mismatch (cert for 100.85.229.181, server at 100.85.242.94) — non-blocking
+
+### Consul Services (registered 2026-06-12)
+| Service | Address | Port |
+|---|---|---|
+| erpnext-nusakura-redis-cache | 100.85.17.19 | 6379 |
+| erpnext-nusakura-redis-queue | 100.85.17.19 | 6380 |
+| erpnext-nusakura-redis-socketio | 100.85.17.19 | 6381 |
+| erpnext-nusakura-mariadb | 100.85.14.86 | 3306 |
+
+### CSI Storage (democratic-csi NFS-ZFS)
+- Plugin: `org.democratic-csi.nfs-zfs` — NFS on `nfs-core-01` (172.16.200.23), ZFS pool `tank/nomad`
+- Volumes in namespace `erpnext-nusakura`:
+  - `erpnext-nusakura-db` → MariaDB `/var/lib/mysql`
+  - `erpnext-nusakura-redis` → Redis socketio `/data`
+  - `erpnext-nusakura-sites` → Frappe sites dir (mounted on core-01, contains live site)
+  - `erpnext-nusakura-logs` → Frappe logs
+- Mount path on clients: `/opt/nomad/client/csi/node/org.democratic-csi.nfs-zfs/staging/erpnext-nusakura/<vol-id>/rw-file-system-single-node-writer/`
+
+### Running Jobs (erpnext-nusakura namespace)
+| Job | Node | Status | Notes |
+|---|---|---|---|
+| erpnext-nusakura-mariadb | core-03 (100.85.14.86) | running | Static port 3306 |
+| erpnext-nusakura-redis | core-01 (100.85.17.19) | running | Static ports 6379/6380/6381 |
+| nusakura-erpnext (old v0) | core-01 (100.85.17.19) | running | Monolithic, deployment=failed but alloc alive |
+
+### Vault
+- Version: v1.17.6, running on all 3 Nomad server nodes, port 8200
+- Initialized and unsealed — but Nomad-Vault integration NOT yet configured (no vault{} stanza in /etc/nomad.d/nomad.hcl)
+- Phase 4 work: wire Vault to Nomad for secrets management
+
+### Production Image Registry
+- `registry.corp.thinkspedia.id` — Harbor, internal CA
+- Current ERPNext image: `registry.corp.thinkspedia.id/erpnext/nusakuraerp:v1.3.19`
+
 ## Cross-Platform Notes
 
 | Platform | Known Issues / Notes |

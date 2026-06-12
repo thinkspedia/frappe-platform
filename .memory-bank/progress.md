@@ -158,3 +158,16 @@
 | 2026-06-11 | Full site migration: stg-erp-nusakura.artavica.com → nusakura-stg.erp.thinkspedia.id (backup + restore) |
 | 2026-06-11 | Fixed: Administrator "Not Permitted" post-restore — roles must be re-added via bench console |
 | 2026-06-11 | Runbook saved: docs/superpowers/plans/2026-06-11-erpnext-backup-restore-stg.md |
+| 2026-06-12 | Nomad cluster audit: phases 0-3 verified, phase 2 CSI confirmed healthy |
+| 2026-06-12 | Fixed nomad-core-03: wiped diverged Raft state, all 3 servers now alive |
+| 2026-06-12 | Diagnosed nusakura-erpnext dead: hardcoded localhost Redis addresses |
+| 2026-06-12 | Decision: Phase 5 full job redesign (Option B) with Consul service discovery |
+| 2026-06-12 | CSI volumes: erpnext-nusakura-{db,redis,sites,logs} all healthy in erpnext-nusakura namespace |
+| 2026-06-12 | Discovered: neither Redis nor MariaDB had Consul service registrations |
+| 2026-06-12 | Fixed: added Consul service blocks to erpnext-nusakura-redis (3 tasks) and erpnext-nusakura-mariadb via Nomad API |
+| 2026-06-12 | Confirmed: all 4 services now healthy in Consul — redis-cache:6379, redis-queue:6380, redis-socketio:6381 on 100.85.17.19; mariadb:3306 on 100.85.14.86 |
+| 2026-06-12 | Discovered: old nusakura-erpnext v0 alloc running on core-01 by coincidence (Redis co-located on same node) |
+| 2026-06-12 | Discovered: existing Frappe site data on CSI volume — nusakura.erp.thinkspedia.id exists |
+| 2026-06-12 | Phase 5 (ERPNext job) deferred — user priority: stabilize server infrastructure first |
+| 2026-06-12 | Created docs/nomad/nomad-upgrade-runbook.md — comprehensive cluster reference |
+| 2026-06-12 | Created auto-memory: project-nomad-infra.md + reference-nomad-docs.md |

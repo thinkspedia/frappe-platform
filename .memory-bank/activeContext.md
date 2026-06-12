@@ -103,9 +103,48 @@ Then `bench --site <site> clear-cache`. If still broken: `bench --site <site> mi
 - **WebSocket "Invalid origin"**: Frappe's `authenticate.js` bug — does not affect prod.
   Do not patch `frappe/` source.
 
-## Next Recommended Actions
-- [ ] Resolve `GET /undefined` console error (desk:124 — likely a custom app hook registering a missing JS bundle)
-- [ ] `platform/nomad/frappe.nomad.hcl` — Nomad job spec (prestart migrate, zero-downtime)
+## Current Priority (user directive 2026-06-12)
+
+**"Focus on preparing the server first — ERPNext installation will be done after all required server has been stable."**
+
+This means: stabilize the Nomad infrastructure (phases 0–4) before deploying the ERPNext application (Phase 5). The ERPNext job redesign is deferred until the platform is stable.
+
+## Nomad Infrastructure Work (2026-06-12)
+
+### Completed this session
+- Diagnosed `nomad-core-03` isolated with diverged Raft state → fixed: wiped `/opt/nomad/server/raft/`, restarted. All 3 servers now alive.
+- Confirmed Phase 2 complete: `org.democratic-csi.nfs-zfs` plugin healthy (1 controller, 3 nodes), 4 CSI volumes provisioned (`erpnext-nusakura-db`, `erpnext-nusakura-redis`, `erpnext-nusakura-sites`, `erpnext-nusakura-logs`)
+- Diagnosed `nusakura-erpnext` dead: hardcoded `redis://127.0.0.1:6380/6381` — Redis is on a different Nomad client node
+- Confirmed Redis Consul service names: `erpnext-nusakura-redis-cache:6379`, `erpnext-nusakura-redis-queue:6380`, `erpnext-nusakura-redis-socketio:6381`
+
+### Phase 5: nusakura-erpnext redesign — DEFERRED (server stability first)
+
+**Design decided (Option B), implementation deferred.**
+
+Key discoveries made before deferral:
+- Neither Redis nor MariaDB had Consul service registrations → **fixed**: added service blocks to both jobs via Nomad API (2026-06-12)
+- All 4 Consul services now registered and passing health checks
+- Old `nusakura-erpnext` job (v0, monolithic) has a live allocation on core-01 — works by coincidence (Redis + ERPNext both on same node)
+- Existing site data confirmed on CSI volume: `nusakura.erp.thinkspedia.id` site exists with DB creds
+- `common_site_config.json` on volume still has hardcoded `127.0.0.1` — needs update when Phase 5 runs
+- MariaDB is on core-03 (100.85.14.86:3306), Redis on core-01 (100.85.17.19)
+
+**Known quirk**: Service registration for `network_mode: host` Nomad jobs creates entries on all Consul agents. Correct instance identified by `?passing=true`. Not a blocker.
+
+### Known open items (infrastructure stability, Phase 4 focus)
+- Consul TLS cert IP mismatch (100.85.229.181 vs 100.85.242.94) — Phase 4 fix
+- Nomad-Vault integration not configured (no vault{} stanza in nomad.hcl) — Phase 4
+- Traefik Vault integration — Phase 4
+- Delete duplicate `frappe-sites` CSI volume (stuck — "shareStrategy undefined" error on delete)
+
+## Next Recommended Actions (server stability priority)
+
+- [x] ~~Resolve `GET /undefined` console error~~ — Frappe bug, scratched
+- [x] Added Consul service registrations to Redis and MariaDB jobs (2026-06-12)
+- [ ] **Phase 4A**: Fix Consul TLS cert IP mismatch (100.85.229.181 vs 100.85.242.94)
+- [ ] **Phase 4B**: Configure Nomad-Vault integration (vault{} stanza in `/etc/nomad.d/nomad.hcl` on all servers)
+- [ ] **Phase 4C**: Verify Traefik → Consul service catalog routing works end-to-end
+- [ ] **Phase 4D**: Migrate secrets from plaintext job env vars to Vault at `secret/erpnext-nusakura/nusakura`
+- [ ] **Phase 5**: Rewrite `platform/nomad/frappe.nomad.hcl` — deferred until platform stable
+- [ ] **Phase 6**: Alerts, runbooks, operational hardening
 - [ ] GitHub Actions CI — automated image build + push to Harbor on tag push
-- [ ] Production environment (separate from staging) — `nusakura-erp-prod`
-- [ ] `platform/cli/` — org-bench CLI (dev setup / build / deploy commands)

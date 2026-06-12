@@ -165,6 +165,37 @@ export NVM_DIR="/home/frappe/.nvm" && source "$NVM_DIR/nvm.sh"
 Asset symlinks use absolute container paths (`/workspace/...`) — broken on host, valid
 inside container. This is expected.
 
+## Nomad Service Registration Pattern
+
+When adding Consul service blocks to an existing Nomad job via API:
+1. Fetch the job JSON: `GET /v1/job/<id>?namespace=<ns>`
+2. Add `Services` array to each task, referencing the port label from the group's `Networks.ReservedPorts`
+3. Submit: `POST /v1/jobs?namespace=<ns>` with body `{"Job": <updated_job>}`
+
+**Quirk with `network_mode: "host"` jobs:** When a job uses Docker's `network_mode: "host"`, adding a service registration via API update may cause the service to appear on ALL Consul agent nodes (not just the allocation node). The correct instance passes health checks; stale entries on other nodes fail and are filtered out by `?passing=true`. Use `| first` or validate addresses in templates.
+
+**Consul API access from Nomad client nodes** (port 8501 HTTPS only, no plain HTTP):
+```bash
+sudo curl -sk \
+  --cacert /etc/nomad.d/tls/consul-ca.pem \
+  --cert /etc/nomad.d/tls/consul-cli.pem \
+  --key /etc/nomad.d/tls/consul-cli-key.pem \
+  -H "X-Consul-Token: <token>" \
+  "https://127.0.0.1:8501/v1/health/service/<name>?passing=true"
+```
+Consul token is in `/etc/nomad.d/nomad.hcl` under `consul { token = "..." }`.
+
+## Nomad Configurator Pattern (ERPNext)
+
+The `configurator` prestart lifecycle task (mirrors Dokploy compose pattern):
+- Runs as `lifecycle { hook = "prestart"; sidecar = false }` inside each task group
+- Uses a `template` stanza with `env = true` to inject Consul-resolved Redis/DB addresses
+- Renders a Python script to `/local/configurator.sh` via a second template stanza
+- Python script merges/writes `sites/common_site_config.json` using resolved addresses
+- All main tasks (gunicorn, socketio, nginx, workers, scheduler) wait for this to complete
+
+Multiple prestart tasks in the same group run concurrently — combine configurator + migrate into a single `init` prestart if ordering is needed.
+
 ## Dokploy Deployment Pattern
 
 Production runs on Dokploy via `platform/dokploy/docker-compose.yml`.

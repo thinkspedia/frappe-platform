@@ -19,9 +19,14 @@ custom apps — automated bootstrap, Traefik reverse proxy, unified Makefile wor
 
 ## What This Repo Does NOT Do
 - No Frappe DocTypes, Server Scripts, Hooks, or app business logic (those live in app repos)
-- No Nomad HCL files (planned)
-- No Dokploy configuration (planned)
 - Does NOT modify `frappe/` or `erpnext/` source — hard constraint
+
+## Current Deployment Targets
+| Target | Status |
+|---|---|
+| Local Docker Compose (`make dev-start`) | Working |
+| Dokploy VPS (nusakura-stg.erp.thinkspedia.id) | Live — migrated 2026-06-11 |
+| Nomad cluster (3 servers, 3 clients) | Infrastructure phases 0–3 complete; Phase 5 (ERPNext job) in progress |
 
 ## Repository Structure
 ```
